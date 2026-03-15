@@ -56,7 +56,24 @@ pip install -r requirements.txt
 
 4. Start Redis.
 
-5. Optional environment variables:
+5. Configure API keys.
+
+Create `local.keys.json` in the project root, for example:
+
+```json
+{
+  "OPENAI_API_KEY": "",
+  "HUGGINGFACE_API_TOKEN": "",
+  "RUNWAY_API_KEY": "",
+  "RUNWAY_BASE_URL": "https://api.dev.runwayml.com",
+  "FAL_KEY": "",
+  "ELEVENLABS_API_KEY": ""
+}
+```
+
+Environment variables still override file values if you need that for deployment.
+
+Optional environment variables:
 
 ```bash
 set REDIS_URL=redis://localhost:6379/0

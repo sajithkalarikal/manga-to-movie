@@ -8,11 +8,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import get_settings
+from modules.ocr_dialogue import OCRDialogueService
 from modules.panel_detection import PanelDetectionService
+from modules.scene_caption import SceneCaptionService
+from modules.script_generator import ScriptGeneratorService
 from task_queue import build_status_payload, enqueue_manga_job, get_redis_pool, get_task_status, set_task_status
 
 settings = get_settings()
 panel_detector = PanelDetectionService(settings)
+ocr_service = OCRDialogueService(settings)
+caption_service = SceneCaptionService(settings)
+script_service = ScriptGeneratorService(settings)
 
 
 class QueueVideoResponse(BaseModel):
@@ -31,6 +37,30 @@ class TaskStatusResponse(BaseModel):
     metadata_url: str | None = None
     subtitles_url: str | None = None
     error: str | None = None
+
+
+class OCRTextResponse(BaseModel):
+    filename: str
+    text: str
+    text_1: str = ""
+    text_2: str = ""
+
+
+class SceneScript(BaseModel):
+    scene_description: str
+    camera_motion: str
+    animation_action: str
+    dialogue: str
+    duration: int
+
+
+class GenerateScriptResponse(BaseModel):
+    request_id: str
+    filename: str
+    panels: int
+    dialogue: list[dict[str, str]]
+    captions: list[dict[str, str]]
+    scene_script: SceneScript
 
 
 @asynccontextmanager
@@ -88,3 +118,54 @@ async def get_task(request_id: str) -> TaskStatusResponse:
     if payload is None:
         raise HTTPException(status_code=404, detail="Task not found.")
     return TaskStatusResponse(**payload)
+
+
+@app.post("/extract-text", response_model=OCRTextResponse)
+async def extract_text(file: UploadFile = File(...)) -> OCRTextResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must include a filename.")
+
+    request_id = uuid4().hex
+    upload_suffix = Path(file.filename).suffix or ".png"
+    upload_path = settings.upload_dir / f"ocr-{request_id}{upload_suffix}"
+    file_bytes = await file.read()
+    await panel_detector.save_upload(upload_path, file_bytes)
+    text_parts = await ocr_service.extract_text_parts_from_image(upload_path, limit=2)
+    text = " ".join(text_parts).strip() or "[no text detected]"
+    text_1 = text_parts[0] if len(text_parts) > 0 else ""
+    text_2 = text_parts[1] if len(text_parts) > 1 else ""
+    return OCRTextResponse(filename=file.filename, text=text, text_1=text_1, text_2=text_2)
+
+
+@app.post("/generate-script", response_model=GenerateScriptResponse)
+async def generate_script(file: UploadFile = File(...)) -> GenerateScriptResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must include a filename.")
+
+    request_id = uuid4().hex
+    upload_suffix = Path(file.filename).suffix or ".png"
+    upload_path = settings.upload_dir / f"script-{request_id}{upload_suffix}"
+    file_bytes = await file.read()
+    await panel_detector.save_upload(upload_path, file_bytes)
+
+    job_dir = settings.output_dir / f"script-{request_id}"
+    panels_dir = job_dir / "panels"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    panels_dir.mkdir(parents=True, exist_ok=True)
+
+    panels = await panel_detector.detect_panels(upload_path=upload_path, output_dir=panels_dir)
+    if not panels:
+        raise HTTPException(status_code=422, detail="No panels were detected in the uploaded manga image.")
+
+    dialogue = await ocr_service.extract_dialogue(panels)
+    captions = await caption_service.generate_captions(panels)
+    scene_script = await script_service.generate_script(dialogue=dialogue, captions=captions)
+
+    return GenerateScriptResponse(
+        request_id=request_id,
+        filename=file.filename,
+        panels=len(panels),
+        dialogue=dialogue,
+        captions=captions,
+        scene_script=SceneScript(**scene_script),
+    )

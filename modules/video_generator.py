@@ -22,13 +22,25 @@ class VideoGeneratorService:
 
         if provider == "runway":
             if not self.settings.runway_api_key:
-                await create_placeholder_video(output_path, int(scene_script.get("duration", 5)), str(scene_script.get("scene_description", "Manga scene")), self.settings.ffmpeg_binary)
+                await create_placeholder_video(
+                    output_path,
+                    int(scene_script.get("duration", 5)),
+                    str(scene_script.get("scene_description", "Manga scene")),
+                    self.settings.ffmpeg_binary,
+                    image_path=scene_image_path,
+                )
                 return output_path
             return await self._generate_with_runway(scene_script, output_path, scene_image_path)
 
         if provider == "pika":
             if not self.settings.fal_api_key:
-                await create_placeholder_video(output_path, int(scene_script.get("duration", 5)), str(scene_script.get("scene_description", "Manga scene")), self.settings.ffmpeg_binary)
+                await create_placeholder_video(
+                    output_path,
+                    int(scene_script.get("duration", 5)),
+                    str(scene_script.get("scene_description", "Manga scene")),
+                    self.settings.ffmpeg_binary,
+                    image_path=scene_image_path,
+                )
                 return output_path
             return await self._generate_with_pika(scene_script, output_path, scene_image_path)
 

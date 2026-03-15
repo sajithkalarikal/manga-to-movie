@@ -1,0 +1,45 @@
+# Local secrets
+local.keys.json
+local.keys.json.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Python environments and installed packages
+.venv/
+venv/
+env/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Model and package caches
+.model_cache/
+.cache/
+
+# Runtime and generated artifacts
+logs/
+temp/
+outputs/
+uploads/
+dump.rdb
+*.log
+*.pid
+*.db
+*.sqlite
+*.sqlite3
+
+# OS/editor files
+.DS_Store
+Thumbs.db
