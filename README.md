@@ -2,6 +2,13 @@
 
 FastAPI project that converts a manga image or manga page into a short animated video using OCR, image captioning, an LLM, video generation APIs, ElevenLabs voice, and FFmpeg composition.
 
+The current Phase 1 path is increasingly local-first:
+- panel detection
+- OCR
+- heuristic scene analysis
+- optional local bubble detector trained from COCO annotations
+- manual correction in the frontend
+
 ## Scalability Upgrades
 
 - Redis-backed job queue with `arq`
@@ -21,6 +28,7 @@ FastAPI project that converts a manga image or manga page into a short animated 
 - Voice generation with ElevenLabs
 - FFmpeg composition with subtitles and optional background music
 - Scene metadata and intermediate artifacts saved in `outputs/<request_id>/`
+- Manual panel override saving for speech, narration, SFX, and bubble counts
 
 ## Project Structure
 
@@ -41,6 +49,36 @@ manga-to-video-ai/
 ```
 
 ## Local Run
+
+### Quick Start
+
+Use the helper script for local setup and startup:
+
+```bash
+./scripts/local.sh setup
+./scripts/local.sh dev
+```
+
+The script:
+- creates `.venv` if needed
+- installs `requirements.txt`
+- creates `local.keys.json` from the example file if missing
+- starts Redis if it is not already running
+- can run the API and worker together
+
+After startup, you can use:
+- Swagger UI at [http://localhost:8000/docs](http://localhost:8000/docs)
+- Frontend UI at [http://localhost:8000/ui](http://localhost:8000/ui)
+
+You can also start pieces individually:
+
+```bash
+./scripts/local.sh redis
+./scripts/local.sh api
+./scripts/local.sh worker
+```
+
+### Manual Run
 
 1. Create a virtual environment.
 2. Install dependencies:
@@ -98,6 +136,70 @@ arq worker.WorkerSettings
 ```
 
 8. Open Swagger UI at [http://localhost:8000/docs](http://localhost:8000/docs)
+9. Open the frontend app at [http://localhost:8000/ui](http://localhost:8000/ui)
+
+## Local Bubble Detector
+
+You can train a local speech-bubble detector from a COCO dataset and plug it into Phase 1.
+
+Expected dataset structure:
+
+```text
+Manga Bubble.v4i.coco/
++-- train/
+|   +-- _annotations.coco.json
++-- valid/
+|   +-- _annotations.coco.json
++-- test/
+    +-- _annotations.coco.json
+```
+
+Train a first model:
+
+```bash
+./.venv/bin/python scripts/train_bubble_detector.py \
+  --dataset-root "/Users/sajith/Documents/New project/Manga Bubble.v4i.coco" \
+  --output models/bubble_detector.pt \
+  --epochs 5 \
+  --batch-size 2
+```
+
+Quick smoke run:
+
+```bash
+./.venv/bin/python scripts/train_bubble_detector.py \
+  --dataset-root "/Users/sajith/Documents/New project/Manga Bubble.v4i.coco" \
+  --output models/bubble_detector_smoke.pt \
+  --epochs 1 \
+  --batch-size 1 \
+  --limit-train 2 \
+  --limit-valid 1 \
+  --device cpu
+```
+
+Enable the trained detector in the app:
+
+```bash
+./scripts/local.sh dev
+```
+
+By default, `./scripts/local.sh dev` now auto-loads:
+
+- [models/bubble_detector.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector.pt) if it exists
+- `BUBBLE_DETECTOR_SCORE_THRESHOLD=0.45`
+
+Optional override:
+
+```bash
+BUBBLE_DETECTOR_WEIGHTS="/custom/path/bubble_detector.pt" \
+BUBBLE_DETECTOR_SCORE_THRESHOLD="0.50" \
+./scripts/local.sh dev
+```
+
+When weights are configured, Phase 1 uses:
+- trained bubble detector first
+- heuristic bubble logic as fallback and merge layer
+- manual overrides in the frontend for correction and future dataset expansion
 
 ## Docker Run
 

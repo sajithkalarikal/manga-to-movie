@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 
@@ -64,6 +65,8 @@ async def process_manga_job(ctx: dict, request_id: str, upload_path: str) -> dic
         )
         await set_task_status(redis, request_id, failure)
         return failure
+    finally:
+        await asyncio.to_thread(Path(upload_path).unlink, True)
 
     success = build_status_payload(
         request_id,

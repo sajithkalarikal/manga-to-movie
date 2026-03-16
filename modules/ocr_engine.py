@@ -77,6 +77,8 @@ class ComicOCREngine:
     def __init__(self):
         self._mocr = None
         self._easy = None
+        enable_manga_ocr = os.getenv("ENABLE_MANGA_OCR", "0").strip().lower() in {"1", "true", "yes", "on"}
+        enable_easyocr = os.getenv("ENABLE_EASYOCR", "0").strip().lower() in {"1", "true", "yes", "on"}
         repo_root = Path(__file__).resolve().parents[1]
         model_cache = repo_root / ".model_cache"
         hf_home = model_cache / "hf"
@@ -91,7 +93,9 @@ class ComicOCREngine:
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ.setdefault("EASYOCR_MODULE_PATH", str(easyocr_home))
 
-        if MangaOcr is not None:
+        if not enable_manga_ocr:
+            logger.info("[OCR] manga-ocr disabled; using Tesseract-first OCR")
+        elif MangaOcr is not None:
             try:
                 logger.info("[OCR] Loading manga-ocr model")
                 if manga_ocr_local.exists():
@@ -103,7 +107,9 @@ class ComicOCREngine:
         else:
             logger.info("[OCR] manga-ocr not installed; skipping")
 
-        if easyocr is not None:
+        if not enable_easyocr:
+            logger.info("[OCR] easyocr disabled; using Tesseract-first OCR")
+        elif easyocr is not None:
             try:
                 logger.info("[OCR] Loading EasyOCR model")
                 self._easy = easyocr.Reader(["en"], gpu=False, model_storage_directory=os.environ["EASYOCR_MODULE_PATH"])

@@ -34,9 +34,22 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 def _default_tesseract_cmd() -> str | None:
     candidates = [
         os.getenv("TESSERACT_CMD"),
+        shutil.which("tesseract"),
+        "/opt/homebrew/bin/tesseract",
+        "/usr/local/bin/tesseract",
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
         os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "Tesseract-OCR", "tesseract.exe"),
@@ -98,6 +111,9 @@ class Settings:
     ffmpeg_binary: str = "/opt/homebrew/bin/ffmpeg"
     ffprobe_binary: str = "/opt/homebrew/bin/ffprobe"
     background_music_path: str = ""
+    bubble_detector_weights: str = ""
+    bubble_detector_score_threshold: float = 0.45
+    bubble_detector_max_detections: int = 8
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -150,6 +166,9 @@ class Settings:
                 ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"],
             ),
             background_music_path=_env_str("BACKGROUND_MUSIC_PATH", ""),
+            bubble_detector_weights=_env_str("BUBBLE_DETECTOR_WEIGHTS", ""),
+            bubble_detector_score_threshold=_env_float("BUBBLE_DETECTOR_SCORE_THRESHOLD", 0.45),
+            bubble_detector_max_detections=_env_int("BUBBLE_DETECTOR_MAX_DETECTIONS", 8),
         )
 
     def prepare_directories(self) -> None:

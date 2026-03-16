@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Manga Override Workspace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Fraunces:opsz,wght@9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="page-header page-header-split">
+        <div>
+          <p class="eyebrow">Manga To Video Studio</p>
+          <h1>Override Workspace</h1>
+          <p class="page-subtitle">Correct the default model output here. Speech = dialogue, Narration = caption or story text, SFX = sound-effect text, Bubbles = final speech-bubble count, Bubble Sequence = bubble positions in reading order.</p>
+        </div>
+        <a class="header-link" href="/ui">Back To Review</a>
+      </header>
+
+      <section class="card">
+        <div class="card-header">
+          <p class="section-kicker">Model Output</p>
+          <h2>Default Bubble Detector Review</h2>
+        </div>
+        <div id="override-meta" class="meta-strip" hidden></div>
+        <div class="override-toolbar">
+          <button id="apply-overrides-button" type="button">Apply Overrides</button>
+          <button id="save-overrides-button" type="button">Save Overrides</button>
+          <button id="export-overrides-button" type="button" class="secondary-button">Export Override JSON</button>
+          <p id="override-status-text" class="status-text status-inline">Load a Phase 1 run from the review page first.</p>
+        </div>
+        <div id="override-panels-grid" class="panels-grid">
+          <p class="empty-state">Run Phase 1 on the review page, then open this workspace to correct the results.</p>
+        </div>
+        <pre id="override-json" class="json-view override-json" hidden>{}</pre>
+      </section>
+    </main>
+
+    <script src="/static/override.js" defer></script>
+  </body>
+</html>

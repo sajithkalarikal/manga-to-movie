@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Manga To Video Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Fraunces:opsz,wght@9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Manga To Video Studio</p>
+          <h1>Phase 1 Review</h1>
+          <p class="page-subtitle">Upload a manga page to inspect panel crops, OCR, captions, and manual panel annotations in one place.</p>
+        </div>
+      </header>
+
+      <section class="toolbar card">
+        <form id="upload-form" class="toolbar-form">
+          <label class="file-picker" for="file-input">
+            <input id="file-input" name="file" type="file" accept="image/*" required />
+            <span class="file-picker-label">Choose manga image</span>
+            <span class="file-picker-hint">PNG, JPG, JPEG</span>
+          </label>
+          <label class="mode-picker" for="bubble-mode">
+            <span class="mode-picker-label">Bubble Detection</span>
+            <span class="mode-picker-hint">Choose heuristic rules or the trained object detector.</span>
+            <select id="bubble-mode" name="bubble_mode">
+              <option value="heuristic" selected>Heuristic</option>
+              <option value="detector">Object Detector</option>
+            </select>
+          </label>
+          <button id="submit-button" type="submit">Run Phase 1</button>
+          <p id="status-text" class="status-text">Ready for upload.</p>
+        </form>
+      </section>
+
+      <section class="overview-grid">
+        <article class="card">
+          <div class="card-header">
+            <p class="section-kicker">Source</p>
+            <h2>Uploaded Page</h2>
+          </div>
+          <div class="preview-frame preview-compact">
+            <img id="source-preview" alt="Uploaded manga preview" hidden />
+            <p id="preview-placeholder" class="empty-state">Your source image will appear here.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <p class="section-kicker">Captions</p>
+            <h2>Panel Captions</h2>
+          </div>
+          <div id="captions-list" class="stack-list">
+            <p class="empty-state">Generated panel captions will appear here.</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <p class="section-kicker">Panels</p>
+          <h2>Cropped Panels With OCR</h2>
+        </div>
+        <div id="panels-meta" class="meta-strip" hidden></div>
+        <p class="panel-help">Use the override workspace to correct the default model output for Speech, Narration, SFX, bubble count, and bubble reading order.</p>
+        <div class="override-toolbar">
+          <button id="open-override-page-button" type="button" class="secondary-button" disabled>Open Override Workspace</button>
+        </div>
+        <div id="panels-grid" class="panels-grid">
+          <p class="empty-state">Detected panel crops will appear here.</p>
+        </div>
+      </section>
+
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

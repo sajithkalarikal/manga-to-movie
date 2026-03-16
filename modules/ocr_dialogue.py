@@ -27,10 +27,6 @@ class OCRDialogueService:
         if not self.ocr_available:
             logger.warning("Tesseract is not installed. OCR will use a placeholder fallback.")
 
-        # Pre-warm optional models (manga-ocr / easyocr / symspell) once.
-        get_ocr_engine()
-        get_corrector()
-
     async def extract_dialogue(self, panels: list[DetectedPanel]) -> list[dict[str, str]]:
         logger.info("Running OCR on %s panels", len(panels))
         if not self.ocr_available:
@@ -56,10 +52,19 @@ class OCRDialogueService:
         return await asyncio.to_thread(self._ocr_parts_sync, image_path, limit)
 
     async def _read_panel(self, panel: DetectedPanel) -> dict[str, str]:
-        text = await asyncio.to_thread(self._ocr_parts_sync, panel.image_path, 1)
+        analysis = await asyncio.to_thread(self._analyze_panel_text_sync, panel.image_path)
+        logger.info(
+            "OCR panel=%s text_regions=%s text_role=%s text_preview=%s",
+            panel.index,
+            analysis["text_regions"],
+            analysis["text_role"],
+            str(analysis["text"])[:120],
+        )
         return {
             "panel": str(panel.index),
-            "text": (text[0] if text else "") or "[no dialogue detected]",
+            "text": analysis["text"] or "[no dialogue detected]",
+            "text_regions": str(analysis["text_regions"]),
+            "text_role": analysis["text_role"],
         }
 
     @staticmethod
@@ -88,11 +93,23 @@ class OCRDialogueService:
         return OCRDialogueService._ocr_parts_from_bgr(bgr, limit)
 
     @staticmethod
+    def _analyze_panel_text_sync(image_path: Path) -> dict[str, str | int]:
+        with Image.open(image_path) as image:
+            bgr = cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR)
+        text_regions = OCRDialogueService._detect_text_regions(bgr)
+        parts = OCRDialogueService._ocr_parts_from_bgr(bgr, limit=max(1, len(text_regions) or 1))
+        joined_text = " ".join(parts).strip() or "[no dialogue detected]"
+        return {
+            "text": joined_text,
+            "text_regions": len(text_regions),
+            "text_role": OCRDialogueService._classify_text_role(text_regions, joined_text),
+        }
+
+    @staticmethod
     def _ocr_parts_from_bgr(bgr: np.ndarray, limit: int = 2) -> list[str]:
         h, w = bgr.shape[:2]
-        boxes = OCRDialogueService._detect_all_narration_boxes(bgr)
+        boxes = OCRDialogueService._detect_text_regions(bgr)
         if not boxes:
-            h, w = bgr.shape[:2]
             boxes = [(0, 0, w, int(h * 0.6))]
 
         ocr_engine = get_ocr_engine()
@@ -117,6 +134,7 @@ class OCRDialogueService:
             cleaned = OCRDialogueService._clean_ocr_line(best)
             if cleaned:
                 cleaned = corrector.correct_line(cleaned)
+                cleaned = OCRDialogueService._finalize_ocr_line(cleaned)
             if not cleaned:
                 continue
             if cleaned in outputs:
@@ -346,6 +364,14 @@ class OCRDialogueService:
         return " ".join(str(text).split())
 
     @staticmethod
+    def _finalize_ocr_line(text: str) -> str:
+        normalized = OCRDialogueService._normalize_spaces(text).upper().strip()
+        normalized = re.sub(r"\b([A-Z]+)( \1\b)+", r"\1", normalized)
+        normalized = re.sub(r"\s+([!?.,])", r"\1", normalized)
+        normalized = re.sub(r"([!?]){3,}", r"\1\1", normalized)
+        return normalized
+
+    @staticmethod
     def _token_only_alpha(token: str) -> str:
         return re.sub(r"[^A-Za-z]", "", token)
 
@@ -396,7 +422,7 @@ class OCRDialogueService:
         return lower in common
 
     @staticmethod
-    def _detect_all_narration_boxes(img_bgr: np.ndarray, min_area: int = 800) -> list[tuple[int, int, int, int]]:
+    def _detect_text_regions(img_bgr: np.ndarray, min_area: int = 800) -> list[tuple[int, int, int, int]]:
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
         found: list[tuple[int, int, int, int]] = []
@@ -424,11 +450,29 @@ class OCRDialogueService:
         c3, _ = cv2.findContours(h_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         found.extend(OCRDialogueService._contours_to_boxes(c3, min_area, 1.2, 14))
 
+        # Speech bubbles are often bright enclosed regions with softer aspect ratios.
+        bubble_binary = cv2.adaptiveThreshold(
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            6,
+        )
+        bubble_binary = cv2.morphologyEx(
+            bubble_binary,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)),
+            iterations=1,
+        )
+        c4, _ = cv2.findContours(bubble_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        found.extend(OCRDialogueService._contours_to_boxes(c4, min_area, 0.5, 2.6))
+
         panel_area = float(h * w)
         found = [box for box in found if (box[2] * box[3]) <= (panel_area * 0.45)]
 
         deduped = OCRDialogueService._deduplicate_boxes(found, 0.3)
-        return deduped
+        return OCRDialogueService._sort_text_regions_manga_order(deduped, panel_height=h)
 
     @staticmethod
     def _contours_to_boxes(contours, min_area: int, min_aspect: float, max_aspect: float) -> list[tuple[int, int, int, int]]:
@@ -461,7 +505,24 @@ class OCRDialogueService:
         for box in sorted(boxes, key=lambda b: b[2] * b[3], reverse=True):
             if all(OCRDialogueService._iou(box, k) < iou_threshold for k in kept):
                 kept.append(box)
-        return sorted(kept, key=lambda b: (b[1], b[0]))
+        return kept
+
+    @staticmethod
+    def _sort_text_regions_manga_order(boxes: list[tuple[int, int, int, int]], panel_height: int) -> list[tuple[int, int, int, int]]:
+        row_band = max(panel_height // 6, 1)
+        return sorted(boxes, key=lambda b: (b[1] // row_band, -(b[0] + b[2]), b[1]))
+
+    @staticmethod
+    def _classify_text_role(boxes: list[tuple[int, int, int, int]], text: str) -> str:
+        if not boxes or text == "[no dialogue detected]":
+            return "ambient"
+        if len(boxes) >= 3:
+            return "conversation"
+        if any((w / max(h, 1)) >= 2.0 for _, _, w, h in boxes):
+            return "narration"
+        if len(text.split()) <= 4:
+            return "reaction"
+        return "dialogue"
 
     @staticmethod
     def _is_tesseract_available() -> bool:
