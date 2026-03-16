@@ -25,6 +25,7 @@ __pycache__/
 htmlcov/
 
 # Model and package caches
+models/
 .model_cache/
 .cache/
 
