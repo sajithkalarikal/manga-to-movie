@@ -1,0 +1,121 @@
+.sparkle-upload-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(173, 29, 74, 0.08),
+    0 0 18px rgba(173, 29, 74, 0.14),
+    0 0 28px rgba(0, 180, 216, 0.08);
+}
+
+.sparkle-upload-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(120deg, transparent 0%, rgba(0, 180, 216, 0.18) 24%, rgba(173, 29, 74, 0.22) 52%, transparent 76%);
+  transform: translateX(-140%);
+  animation: sparkle-upload-sheen 3.8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.sparkle-upload-button__glint {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 84% 26%, rgba(255, 255, 255, 0.85), transparent 18%),
+    radial-gradient(circle at 18% 74%, rgba(0, 180, 216, 0.26), transparent 22%);
+  opacity: 0.72;
+  animation: sparkle-upload-pulse 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.sparkle-upload-button__twinkle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.15) 62%, transparent 78%);
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+}
+
+.sparkle-upload-button__twinkle--one {
+  top: 7px;
+  right: 14px;
+  animation: sparkle-upload-float-one 2.4s ease-in-out infinite;
+}
+
+.sparkle-upload-button__twinkle--two {
+  bottom: 7px;
+  right: 36px;
+  width: 7px;
+  height: 7px;
+  animation: sparkle-upload-float-two 2.9s ease-in-out infinite;
+}
+
+@keyframes sparkle-upload-sheen {
+  0%,
+  18% {
+    transform: translateX(-145%);
+    opacity: 0;
+  }
+  28% {
+    opacity: 1;
+  }
+  54% {
+    transform: translateX(145%);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateX(145%);
+    opacity: 0;
+  }
+}
+
+@keyframes sparkle-upload-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.92;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes sparkle-upload-float-one {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translate3d(0, 0, 0) scale(0.82);
+  }
+  40% {
+    opacity: 1;
+    transform: translate3d(-2px, -3px, 0) scale(1);
+  }
+  70% {
+    opacity: 0.64;
+    transform: translate3d(1px, 2px, 0) scale(0.88);
+  }
+}
+
+@keyframes sparkle-upload-float-two {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translate3d(0, 0, 0) scale(0.75);
+  }
+  45% {
+    opacity: 0.95;
+    transform: translate3d(3px, -2px, 0) scale(1);
+  }
+  72% {
+    opacity: 0.58;
+    transform: translate3d(-1px, 2px, 0) scale(0.82);
+  }
+}

@@ -59,7 +59,9 @@ Current detector model:
 - detector: `fasterrcnn_mobilenet_v3_large_fpn`
 - classes:
   - `background`
-  - `Bubble with Text`
+  - `speech_bubble`
+  - `narration_box`
+  - `sfx`
 
 Model definition and load path:
 
@@ -68,24 +70,22 @@ Model definition and load path:
 
 ## Dataset
 
-Training dataset used:
+Current best multi-class experiment:
 
-- [Manga Bubble.v4i.coco](/Users/sajith/Documents/New%20project/Manga%20Bubble.v4i.coco)
+- checkpoint: [models/bubble_detector_v2_new_only.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector_v2_new_only.pt)
+- training data: [outputs/dataset_annotations/exported_coco/new object training data.v1.coco](/Users/sajith/Documents/New%20project/manga-to-movie/outputs/dataset_annotations/exported_coco/new%20object%20training%20data.v1.coco)
 
-Verified split counts:
+Split counts for the exported multi-class dataset:
 
-- train: `1905` images
-- valid: `244` images
-- test: `250` images
+- train: `144` images
+- valid: `18` images
+- test: `18` images
 
-Used annotation class:
+Labeled classes:
 
-- `Bubble with Text`
-
-Note:
-
-- the COCO file contains another category named `objects`
-- current training data only uses `Bubble with Text`
+- `speech_bubble`
+- `narration_box`
+- `sfx`
 
 ## Training Configuration
 
@@ -111,8 +111,8 @@ Optimizer:
 
 Checkpoint outputs:
 
-- best model: [models/bubble_detector.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector.pt)
-- latest checkpoint: [models/bubble_detector.latest.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector.latest.pt)
+- best model: [models/bubble_detector_v2_new_only.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector_v2_new_only.pt)
+- latest checkpoint: [models/bubble_detector_v2_new_only.latest.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector_v2_new_only.latest.pt)
 
 ## Inference Configuration
 
@@ -123,7 +123,8 @@ Current detector runtime settings from [config.py](/Users/sajith/Documents/New%2
 
 Post-processing behavior from [modules/bubble_detector.py](/Users/sajith/Documents/New%20project/manga-to-movie/modules/bubble_detector.py):
 
-- only label `1` is accepted
+- class names are loaded from the checkpoint
+- `Bubble with Text` and `objects` are normalized to `speech_bubble`
 - detections below score threshold are discarded
 - boxes with width or height under `8` pixels are discarded
 - detections are capped to the configured max detections
@@ -175,26 +176,57 @@ Check runtime logs here:
 
 ## Current Metrics
 
-What we have currently from training:
+Current multi-class metrics:
 
-- epoch 1 train loss: `0.7407`
-- epoch 1 valid loss: `0.5312`
-- epoch 2 train loss: `0.4626`
-- epoch 2 valid loss: `0.3730`
+- valid:
+  - `mAP@0.50:0.95 = 0.1846`
+  - `mAP@0.50 = 0.2750`
+  - `recall = 0.2166`
+- test:
+  - `mAP@0.50:0.95 = 0.1852`
+  - `mAP@0.50 = 0.2799`
+  - `recall = 0.2124`
 
-What we do not yet have in the current trainer:
+Evaluation support is now set up with:
+
+- [scripts/eval_bubble_detector.py](/Users/sajith/Documents/New%20project/manga-to-movie/scripts/eval_bubble_detector.py)
+
+This script is designed to report:
 
 - precision
 - recall
-- mAP
-- F1
+- mAP@0.50
+- mAP@0.50:0.95
 
-So the current measurable training status is based on:
+Metrics are written to:
 
-- training loss
-- validation loss
+- `outputs/eval/predictions_<split>.json`
+- `outputs/eval/metrics_<split>.json`
 
-If precision/recall/mAP are needed, the next improvement is to add a proper object-detection evaluation pass against the validation or test split.
+Example command:
+
+```bash
+./.venv/bin/python scripts/eval_bubble_detector.py \
+  --dataset-root "/Users/sajith/Documents/New project/Manga Bubble.v4i.coco" \
+  --weights models/bubble_detector.pt \
+  --split valid \
+  --run-name baseline_valid \
+  --score-threshold 0.45 \
+  --max-detections 8
+```
+
+Comparison command after the new model is trained:
+
+```bash
+./.venv/bin/python scripts/compare_bubble_eval.py \
+  --baseline outputs/eval/metrics_baseline_valid.json \
+  --candidate outputs/eval/metrics_new_model_valid.json
+```
+
+Current note:
+
+- `pycocotools` is required for the evaluation script
+- if it is not installed yet, install dependencies first with `pip install -r requirements.txt`
 
 ## Current Strengths
 
@@ -206,14 +238,13 @@ If precision/recall/mAP are needed, the next improvement is to add a proper obje
 
 ## Current Limitations
 
-- precision/recall/mAP are not yet computed
-- detector only predicts one class: `Bubble with Text`
-- narration and SFX are still derived from downstream heuristics, not from the detector
+- multi-class quality is still modest and needs more annotations
+- narration and SFX still rely partly on downstream heuristics around detector output
 - CPU training and inference are slower than GPU
 
 ## Recommended Next Improvements
 
-1. Add validation/test evaluation with precision, recall, and mAP.
+1. Run the new evaluation script on `valid` and `test`.
 2. Expand the dataset to separate:
    - `speech_bubble`
    - `narration_box`

@@ -20,6 +20,9 @@
           <h1>Phase 1 Review</h1>
           <p class="page-subtitle">Upload a manga page to inspect panel crops, OCR, captions, and manual panel annotations in one place.</p>
         </div>
+        <div class="header-actions">
+          <a class="header-link" href="/annotate">Open Annotation Workspace</a>
+        </div>
       </header>
 
       <section class="toolbar card">
@@ -33,6 +36,14 @@
             <span class="mode-picker-label">Bubble Detection</span>
             <span class="mode-picker-hint">Choose heuristic rules or the trained object detector.</span>
             <select id="bubble-mode" name="bubble_mode">
+              <option value="heuristic" selected>Heuristic</option>
+              <option value="detector">Object Detector</option>
+            </select>
+          </label>
+          <label class="mode-picker" for="panel-mode">
+            <span class="mode-picker-label">Panel Detection</span>
+            <span class="mode-picker-hint">Choose the current rule-based splitter or the trained panel detector.</span>
+            <select id="panel-mode" name="panel_mode">
               <option value="heuristic" selected>Heuristic</option>
               <option value="detector">Object Detector</option>
             </select>

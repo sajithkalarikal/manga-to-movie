@@ -1,6 +1,10 @@
 import asyncio
+from datetime import datetime, timezone
+import json
 import logging
+import os
 from pathlib import Path
+import socket
 
 from arq import Retry
 from arq.connections import RedisSettings
@@ -11,6 +15,29 @@ from pipeline import MangaVideoPipeline
 from task_queue import build_status_payload, get_redis_pool, set_task_status
 
 logger = logging.getLogger(__name__)
+WORKER_HEARTBEAT_INTERVAL_SECONDS = 15
+WORKER_HEARTBEAT_TTL_SECONDS = 60
+
+
+def _worker_heartbeat_key() -> str:
+    return f"health:worker:{socket.gethostname()}:{os.getpid()}"
+
+
+async def _worker_heartbeat_loop(ctx: dict) -> None:
+    redis = ctx["redis"]
+    settings: Settings = ctx["settings"]
+    key = _worker_heartbeat_key()
+    while True:
+        payload = {
+            "worker_key": key,
+            "hostname": socket.gethostname(),
+            "pid": os.getpid(),
+            "queue_name": settings.redis_queue_name,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "status": "alive",
+        }
+        await redis.set(key, json.dumps(payload), ex=WORKER_HEARTBEAT_TTL_SECONDS)
+        await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL_SECONDS)
 
 
 async def startup(ctx: dict) -> None:
@@ -18,11 +45,20 @@ async def startup(ctx: dict) -> None:
     ctx["settings"] = settings
     ctx["pipeline"] = MangaVideoPipeline(settings)
     ctx["redis"] = await get_redis_pool()
+    ctx["heartbeat_task"] = asyncio.create_task(_worker_heartbeat_loop(ctx))
 
 
 async def shutdown(ctx: dict) -> None:
+    heartbeat_task = ctx.get("heartbeat_task")
+    if heartbeat_task is not None:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
     redis = ctx.get("redis")
     if redis is not None:
+        await redis.delete(_worker_heartbeat_key())
         await redis.close()
 
 

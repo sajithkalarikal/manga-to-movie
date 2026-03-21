@@ -52,23 +52,32 @@ manga-to-video-ai/
 
 ### Quick Start
 
-Use the helper script for local setup and startup:
+Use the helper script once for setup, then run the API and web watcher separately:
 
 ```bash
 ./scripts/local.sh setup
-./scripts/local.sh dev
+./load.sh
+./init.md
 ```
 
-The script:
+Setup and startup behavior:
 - creates `.venv` if needed
 - installs `requirements.txt`
+- installs web dependencies when Node is available
 - creates `local.keys.json` from the example file if missing
-- starts Redis if it is not already running
-- can run the API and worker together
+- `./load.sh` starts the API, starts Redis if it is not already running, and shuts down the Redis instance it started when you exit
+- `./init.md` runs `npx vite build --watch` from `web/` so `web/dist` stays updated on file changes
+
+If you want `./load.sh` to always stop Redis on exit, even when Redis was already running before startup, use:
+
+```bash
+REDIS_EXIT_MODE=always ./load.sh
+```
 
 After startup, you can use:
 - Swagger UI at [http://localhost:8000/docs](http://localhost:8000/docs)
-- Frontend UI at [http://localhost:8000/ui](http://localhost:8000/ui)
+- React UI at [http://localhost:8000/ui_v2/home](http://localhost:8000/ui_v2/home)
+- Health UI at [http://localhost:8000/ui_v2/health](http://localhost:8000/ui_v2/health)
 
 You can also start pieces individually:
 
@@ -77,6 +86,8 @@ You can also start pieces individually:
 ./scripts/local.sh api
 ./scripts/local.sh worker
 ```
+
+The legacy static UI is still available at [http://localhost:8000/ui](http://localhost:8000/ui), but current frontend work should go through `ui_v2`.
 
 ### Manual Run
 
@@ -136,7 +147,13 @@ arq worker.WorkerSettings
 ```
 
 8. Open Swagger UI at [http://localhost:8000/docs](http://localhost:8000/docs)
-9. Open the frontend app at [http://localhost:8000/ui](http://localhost:8000/ui)
+9. Build the React frontend in a second terminal:
+
+```bash
+./init.md
+```
+
+10. Open the frontend app at [http://localhost:8000/ui_v2/home](http://localhost:8000/ui_v2/home)
 
 ## Local Bubble Detector
 
@@ -180,12 +197,13 @@ Quick smoke run:
 Enable the trained detector in the app:
 
 ```bash
-./scripts/local.sh dev
+./load.sh
 ```
 
-By default, `./scripts/local.sh dev` now auto-loads:
+By default, `./load.sh` now auto-loads:
 
-- [models/bubble_detector.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector.pt) if it exists
+- [models/bubble_detector_v2_new_only.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector_v2_new_only.pt) if it exists
+- otherwise falls back to [models/bubble_detector.pt](/Users/sajith/Documents/New%20project/manga-to-movie/models/bubble_detector.pt)
 - `BUBBLE_DETECTOR_SCORE_THRESHOLD=0.45`
 
 Optional override:
@@ -193,13 +211,31 @@ Optional override:
 ```bash
 BUBBLE_DETECTOR_WEIGHTS="/custom/path/bubble_detector.pt" \
 BUBBLE_DETECTOR_SCORE_THRESHOLD="0.50" \
-./scripts/local.sh dev
+./load.sh
 ```
 
 When weights are configured, Phase 1 uses:
 - trained bubble detector first
 - heuristic bubble logic as fallback and merge layer
 - manual overrides in the frontend for correction and future dataset expansion
+
+### Two-Stage Training
+
+For the current multi-class detector flow, the recommended path is:
+
+1. speech-focused pretraining or reuse of the older bubble checkpoint
+2. new-dataset-only multi-class fine-tuning
+
+Current recommended fine-tune command:
+
+```bash
+./.venv/bin/python scripts/train_bubble_detector.py \
+  --dataset-root "/Users/sajith/Documents/New project/manga-to-movie/outputs/dataset_annotations/exported_coco/new object training data.v1.coco" \
+  --output models/bubble_detector_v2_new_only.pt \
+  --init-weights models/bubble_detector.pt \
+  --epochs 3 \
+  --batch-size 2
+```
 
 ## Docker Run
 

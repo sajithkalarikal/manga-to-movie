@@ -1,6 +1,7 @@
 const form = document.getElementById("upload-form");
 const fileInput = document.getElementById("file-input");
 const bubbleModeSelect = document.getElementById("bubble-mode");
+const panelModeSelect = document.getElementById("panel-mode");
 const submitButton = document.getElementById("submit-button");
 const statusText = document.getElementById("status-text");
 const sourcePreview = document.getElementById("source-preview");
@@ -14,6 +15,8 @@ let latestPanelResult = null;
 let latestDialogue = [];
 let latestCaptions = [];
 let latestBubbleMode = "heuristic";
+let latestPanelMode = "heuristic";
+let latestSourceImageUrl = "";
 
 function setStatus(message) {
   statusText.textContent = message;
@@ -24,6 +27,8 @@ function resetResults() {
   latestDialogue = [];
   latestCaptions = [];
   latestBubbleMode = bubbleModeSelect?.value || "heuristic";
+  latestPanelMode = panelModeSelect?.value || "heuristic";
+  latestSourceImageUrl = "";
   panelsMeta.hidden = true;
   panelsMeta.innerHTML = "";
   panelsGrid.innerHTML = '<p class="empty-state">Detected panel crops will appear here.</p>';
@@ -120,6 +125,8 @@ function persistOverridePayload() {
     dialogue: latestDialogue,
     captions: latestCaptions,
     bubbleMode: latestBubbleMode,
+    panelMode: latestPanelMode,
+    sourceImageUrl: latestSourceImageUrl,
     savedAt: new Date().toISOString(),
   };
   sessionStorage.setItem("phase1_override_payload", JSON.stringify(payload));
@@ -136,6 +143,7 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
 
 async function uploadTo(endpoint, file, extraFields = {}) {
   const formData = new FormData();
@@ -177,17 +185,22 @@ form.addEventListener("submit", async (event) => {
 
   try {
     latestBubbleMode = bubbleModeSelect?.value || "heuristic";
+    latestPanelMode = panelModeSelect?.value || "heuristic";
     setStatus("Detecting panels...");
-    const panelResult = await uploadTo("/detect-panels", file);
+    const panelResult = await uploadTo("/detect-panels", file, { panel_mode: latestPanelMode });
+    latestSourceImageUrl = panelResult.source_image_url || "";
     renderPanels(panelResult);
 
     setStatus("Running panel analysis...");
-    const analysisResult = await uploadTo("/analyze-panels", file, { bubble_mode: latestBubbleMode });
+    const analysisResult = await uploadTo("/analyze-panels", file, {
+      bubble_mode: latestBubbleMode,
+      panel_mode: latestPanelMode,
+    });
     latestPanelResult = { ...panelResult, request_id: analysisResult.request_id };
     renderPanels(latestPanelResult, analysisResult.dialogue || [], analysisResult.captions || []);
     renderCaptions(analysisResult.captions || []);
 
-    setStatus(`Phase 1 completed using ${latestBubbleMode}. Open the override workspace to correct the default model output.`);
+    setStatus(`Phase 1 completed using panel=${latestPanelMode} and bubble=${latestBubbleMode}. Open the override workspace to correct the default model output.`);
   } catch (error) {
     if (latestPanelResult) {
       renderPanels(latestPanelResult);

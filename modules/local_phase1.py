@@ -26,6 +26,9 @@ class PanelSceneFeatures:
     speech_count: int
     narration_count: int
     sfx_count: int
+    speech_boxes: list[tuple[int, int, int, int]]
+    narration_boxes: list[tuple[int, int, int, int]]
+    sfx_boxes: list[tuple[int, int, int, int]]
     shot_type: str
     motion_level: str
     tone: str
@@ -53,6 +56,9 @@ class PanelSceneFeatures:
             "speech_count": str(self.speech_count),
             "narration_count": str(self.narration_count),
             "sfx_count": str(self.sfx_count),
+            "speech_boxes": [[int(x), int(y), int(w), int(h)] for x, y, w, h in self.speech_boxes],
+            "narration_boxes": [[int(x), int(y), int(w), int(h)] for x, y, w, h in self.narration_boxes],
+            "sfx_boxes": [[int(x), int(y), int(w), int(h)] for x, y, w, h in self.sfx_boxes],
             "transition_hint": self.transition_hint,
             "layout_role": self.layout_role,
         }
@@ -83,10 +89,16 @@ def analyze_panels(panels: list[DetectedPanel], bubble_mode: str = "heuristic") 
         edge_density = float(np.mean(edges > 0))
         model_result = bubble_detector.detect(image) if bubble_mode == "detector" else None
         if bubble_mode == "detector" and model_result is not None:
-            bubble_boxes = list(model_result.boxes)
+            speech_seed_boxes = model_result.boxes_for("speech_bubble")
+            narration_seed_boxes = model_result.boxes_for("narration_box")
+            sfx_seed_boxes = model_result.boxes_for("sfx")
+            bubble_boxes = list(speech_seed_boxes)
             bubble_candidate_count = len(model_result.boxes)
         else:
             bubble_boxes, bubble_candidate_count = _detect_bubble_boxes_with_debug(gray)
+            speech_seed_boxes = []
+            narration_seed_boxes = []
+            sfx_seed_boxes = []
         merged_regions = _promote_bubbles_from_text_regions(
             bubble_boxes=bubble_boxes,
             gray=gray,
@@ -96,14 +108,19 @@ def analyze_panels(panels: list[DetectedPanel], bubble_mode: str = "heuristic") 
         )
         classified_regions = _classify_text_regions(
             gray,
-            merged_regions,
+            _merge_detection_boxes(merged_regions, narration_seed_boxes + sfx_seed_boxes),
             panel_width,
             panel_height,
-            speech_seed_boxes=model_result.boxes if model_result is not None else None,
+            speech_seed_boxes=speech_seed_boxes,
+            narration_seed_boxes=narration_seed_boxes,
+            sfx_seed_boxes=sfx_seed_boxes,
         )
-        speech_boxes = [item["box"] for item in classified_regions if item["kind"] == "speech"]
-        narration_boxes = [item["box"] for item in classified_regions if item["kind"] == "narration"]
-        sfx_boxes = [item["box"] for item in classified_regions if item["kind"] == "sfx"]
+        speech_boxes = _dedupe_boxes_prefer_largest([item["box"] for item in classified_regions if item["kind"] == "speech"])
+        narration_boxes = _dedupe_boxes_prefer_largest([item["box"] for item in classified_regions if item["kind"] == "narration"])
+        sfx_boxes = _dedupe_boxes_prefer_largest([item["box"] for item in classified_regions if item["kind"] == "sfx"])
+        speech_boxes.sort(key=lambda box: _region_sort_key(box, panel_height))
+        narration_boxes.sort(key=lambda box: _region_sort_key(box, panel_height))
+        sfx_boxes.sort(key=lambda box: _region_sort_key(box, panel_height))
         bubble_count = len(speech_boxes)
         bubble_sequence = _describe_bubble_sequence(speech_boxes, panel_width, panel_height)
         shot_type = _classify_shot_type(area_ratio, aspect_ratio)
@@ -126,6 +143,9 @@ def analyze_panels(panels: list[DetectedPanel], bubble_mode: str = "heuristic") 
                 speech_count=len(speech_boxes),
                 narration_count=len(narration_boxes),
                 sfx_count=len(sfx_boxes),
+                speech_boxes=speech_boxes,
+                narration_boxes=narration_boxes,
+                sfx_boxes=sfx_boxes,
                 shot_type=shot_type,
                 motion_level=motion_level,
                 tone=tone,
@@ -363,10 +383,7 @@ def _detect_bubble_boxes_with_debug(gray: np.ndarray) -> tuple[list[tuple[int, i
                 continue
             boxes.append((int(x), int(y), int(w), int(h)))
 
-    deduped: list[tuple[int, int, int, int]] = []
-    for box in sorted(boxes, key=lambda item: item[2] * item[3], reverse=True):
-        if all(_box_iou(box, kept) < 0.35 for kept in deduped):
-            deduped.append(box)
+    deduped = _dedupe_boxes_prefer_largest(boxes)
     deduped.sort(key=lambda box: (box[1] // max(gray.shape[0] // 6, 1), -(box[0] + box[2])))
     return deduped[:6], candidate_count
 
@@ -426,10 +443,7 @@ def _promote_bubbles_from_text_regions(
         accepted.append(expanded)
         promoted += 1
 
-    deduped: list[tuple[int, int, int, int]] = []
-    for box in sorted(accepted, key=lambda item: item[2] * item[3], reverse=True):
-        if all(_box_iou(box, kept) < 0.35 for kept in deduped):
-            deduped.append(box)
+    deduped = _dedupe_boxes_prefer_largest(accepted)
     deduped.sort(key=lambda box: (box[1] // max(panel_height // 6, 1), -(box[0] + box[2])))
     return deduped[:6]
 
@@ -440,11 +454,15 @@ def _classify_text_regions(
     panel_width: int,
     panel_height: int,
     speech_seed_boxes: list[tuple[int, int, int, int]] | None = None,
+    narration_seed_boxes: list[tuple[int, int, int, int]] | None = None,
+    sfx_seed_boxes: list[tuple[int, int, int, int]] | None = None,
 ) -> list[dict[str, object]]:
     classified: list[dict[str, object]] = []
     panel_area = max(panel_width * panel_height, 1)
     edges = cv2.Canny(gray, 80, 160)
     speech_seed_boxes = speech_seed_boxes or []
+    narration_seed_boxes = narration_seed_boxes or []
+    sfx_seed_boxes = sfx_seed_boxes or []
     for box in regions:
         x, y, w, h = box
         region = gray[y : y + h, x : x + w]
@@ -460,6 +478,10 @@ def _classify_text_regions(
 
         if any(_box_iou(box, seed) >= 0.20 for seed in speech_seed_boxes):
             kind = "speech"
+        elif any(_box_iou(box, seed) >= 0.20 for seed in narration_seed_boxes):
+            kind = "narration"
+        elif any(_box_iou(box, seed) >= 0.20 for seed in sfx_seed_boxes):
+            kind = "sfx"
         elif dark_ratio >= 0.35 and border_dark >= 0.22:
             kind = "narration"
         elif brightness >= 165 and border_dark >= 0.03 and 0.45 <= aspect_ratio <= 2.8:
@@ -573,13 +595,45 @@ def _box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> floa
     return inter / union if union > 0 else 0.0
 
 
+def _box_containment_ratio(inner: tuple[int, int, int, int], outer: tuple[int, int, int, int]) -> float:
+    ix, iy, iw, ih = inner
+    ox, oy, ow, oh = outer
+    inter_x1 = max(ix, ox)
+    inter_y1 = max(iy, oy)
+    inter_x2 = min(ix + iw, ox + ow)
+    inter_y2 = min(iy + ih, oy + oh)
+    inter = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
+    inner_area = max(iw * ih, 1)
+    return inter / inner_area
+
+
+def _dedupe_boxes_prefer_largest(
+    boxes: list[tuple[int, int, int, int]],
+    iou_threshold: float = 0.35,
+    containment_threshold: float = 0.92,
+) -> list[tuple[int, int, int, int]]:
+    deduped: list[tuple[int, int, int, int]] = []
+    for box in sorted(boxes, key=lambda item: item[2] * item[3], reverse=True):
+        if any(
+            _box_iou(box, kept) >= iou_threshold or _box_containment_ratio(box, kept) >= containment_threshold
+            for kept in deduped
+        ):
+            continue
+        deduped.append(box)
+    return deduped
+
+
 def _merge_detection_boxes(
     heuristic_boxes: list[tuple[int, int, int, int]],
     model_boxes: list[tuple[int, int, int, int]],
 ) -> list[tuple[int, int, int, int]]:
-    merged = list(heuristic_boxes)
+    merged = _dedupe_boxes_prefer_largest(list(heuristic_boxes))
     for model_box in model_boxes:
-        if all(_box_iou(model_box, existing) < 0.30 for existing in merged):
+        if all(
+            _box_iou(model_box, existing) < 0.30 and _box_containment_ratio(model_box, existing) < 0.92
+            for existing in merged
+        ):
             merged.append(model_box)
+    merged = _dedupe_boxes_prefer_largest(merged, iou_threshold=0.30, containment_threshold=0.92)
     merged.sort(key=lambda box: (box[1], box[0]))
     return merged

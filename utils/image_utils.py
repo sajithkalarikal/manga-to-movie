@@ -40,9 +40,14 @@ def _detect_panel_boxes_sync(image_path: Path) -> list[tuple[int, int, int, int]
             boxes.append((x, y, x + w, y + h))
 
     if len(boxes) < 2:
-        boxes = _fallback_boxes(gray)
+        if _should_treat_as_full_page(gray):
+            boxes = [(0, 0, width, height)]
+        else:
+            boxes = _fallback_boxes(gray)
 
     boxes = _merge_spurious_top_row_splits(boxes, page_width=width, page_height=height)
+    boxes = _repair_asymmetric_top_bottom_layout(gray, boxes, page_width=width, page_height=height)
+    boxes = _merge_fragmented_lower_band(boxes, page_width=width, page_height=height)
     return [tuple(int(value) for value in box) for box in _sort_boxes(boxes, height)]
 
 
@@ -56,6 +61,41 @@ def _fallback_boxes(gray: np.ndarray) -> list[tuple[int, int, int, int]]:
         bottom = height if index == panel_count - 1 else (index + 1) * segment_height
         boxes.append((0, top, width, bottom))
     return boxes
+
+
+def _should_treat_as_full_page(gray: np.ndarray) -> bool:
+    height, width = gray.shape
+    page_area = height * width
+
+    horizontal_split = _find_gutter_split(gray, axis=0)
+    vertical_split = _find_gutter_split(gray, axis=1)
+    if horizontal_split is not None or vertical_split is not None:
+        return False
+
+    thresholded = cv2.threshold(cv2.GaussianBlur(gray, (5, 5), 0), 220, 255, cv2.THRESH_BINARY_INV)[1]
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats(thresholded, connectivity=8)
+    large_components = []
+    for label in range(1, component_count):
+        x, y, w, h, area = stats[label]
+        if area < page_area * 0.02:
+            continue
+        large_components.append((x, y, w, h, int(area)))
+
+    if len(large_components) <= 1:
+        return True
+
+    large_components.sort(key=lambda item: item[4], reverse=True)
+    top_components = large_components[:3]
+    combined_area = sum(component[4] for component in top_components) / max(page_area, 1)
+
+    # A single splash/full-page panel usually behaves like one dominant connected
+    # mass without any trustworthy internal gutter path. If the page is mostly
+    # explained by one large component, prefer returning the whole page.
+    largest_share = top_components[0][4] / max(page_area, 1)
+    if largest_share >= 0.30 and combined_area <= 0.58:
+        return True
+
+    return False
 
 
 def _sort_boxes(boxes: list[tuple[int, int, int, int]], height: int) -> list[tuple[int, int, int, int]]:
@@ -90,6 +130,163 @@ def _merge_spurious_top_row_splits(
             merged = True
             break
     return remaining
+
+
+def _repair_asymmetric_top_bottom_layout(
+    gray: np.ndarray,
+    boxes: list[tuple[int, int, int, int]],
+    page_width: int,
+    page_height: int,
+) -> list[tuple[int, int, int, int]]:
+    if len(boxes) != 3:
+        return boxes
+
+    ordered = _sort_boxes_left_to_right(boxes, page_height)
+    first, second, third = ordered
+    if abs(first[1] - second[1]) > max(30, int(page_height * 0.02)):
+        return boxes
+    if abs(first[3] - second[3]) > max(30, int(page_height * 0.03)):
+        return boxes
+    if third[1] <= min(first[3], second[3]):
+        return boxes
+
+    top_width = second[2] - first[0]
+    bottom_width = third[2] - third[0]
+    if top_width < int(page_width * 0.90) or bottom_width < int(page_width * 0.94):
+        return boxes
+
+    anchor = (first[2] + second[0]) // 2
+    vertical_split = _find_local_projection_valley(
+        gray[third[1] : third[3], third[0] : third[2]],
+        axis=1,
+        anchor=anchor - third[0],
+        span_limit=max(100, int(page_width * 0.14)),
+    )
+    if vertical_split is None:
+        return boxes
+
+    split_x = third[0] + vertical_split
+    right_box = (split_x, third[1], third[2], third[3])
+    left_box = (third[0], third[1], split_x, third[3])
+
+    horizontal_split = _find_local_projection_valley(
+        gray[left_box[1] : left_box[3], left_box[0] : left_box[2]],
+        axis=0,
+        anchor=int((left_box[3] - left_box[1]) * 0.55),
+        span_limit=max(120, int(page_height * 0.12)),
+    )
+
+    repaired = [(first[0], min(first[1], second[1]), second[2], max(first[3], second[3]))]
+    if horizontal_split is not None:
+        split_y = left_box[1] + horizontal_split
+        repaired.append((left_box[0], left_box[1], left_box[2], split_y))
+        repaired.append((left_box[0], split_y, left_box[2], left_box[3]))
+    else:
+        repaired.append(left_box)
+    repaired.append(right_box)
+    return repaired
+
+
+def _find_local_projection_valley(
+    gray: np.ndarray,
+    axis: int,
+    anchor: int,
+    span_limit: int,
+) -> int | None:
+    if gray.size == 0:
+        return None
+
+    if axis == 1:
+        profile = np.mean(gray < 200, axis=0).astype(np.float32)
+        span = gray.shape[1]
+    else:
+        profile = np.mean(gray < 200, axis=1).astype(np.float32)
+        span = gray.shape[0]
+
+    if span < 80:
+        return None
+
+    start = max(int(span * 0.15), anchor - span_limit)
+    end = min(int(span * 0.85), anchor + span_limit)
+    if end - start < 20:
+        return None
+
+    smooth = np.convolve(profile, np.ones(21, dtype=np.float32) / 21.0, mode="same")
+    search = smooth[start:end]
+    valley_index = int(start + np.argmin(search))
+    valley_value = float(smooth[valley_index])
+
+    left_band = smooth[max(start, valley_index - span_limit) : valley_index]
+    right_band = smooth[valley_index + 1 : min(end, valley_index + span_limit)]
+    if left_band.size == 0 or right_band.size == 0:
+        return None
+
+    left_peak = float(np.max(left_band))
+    right_peak = float(np.max(right_band))
+    if min(left_peak, right_peak) < 0.18:
+        return None
+    if valley_value / max(min(left_peak, right_peak), 1e-6) > 0.45:
+        return None
+    return valley_index
+
+
+def _merge_fragmented_lower_band(
+    boxes: list[tuple[int, int, int, int]],
+    page_width: int,
+    page_height: int,
+) -> list[tuple[int, int, int, int]]:
+    if len(boxes) < 6:
+        return boxes
+
+    sorted_boxes = _sort_boxes_left_to_right(boxes, page_height)
+    upper_boxes = [box for box in sorted_boxes if box[1] < int(page_height * 0.60)]
+    lower_boxes = [box for box in sorted_boxes if box[1] >= int(page_height * 0.60)]
+    if len(upper_boxes) < 2 or len(lower_boxes) < 4:
+        return boxes
+
+    right_candidate = max(lower_boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
+    right_width = right_candidate[2] - right_candidate[0]
+    if right_width > int(page_width * 0.45) or right_candidate[0] < int(page_width * 0.55):
+        return boxes
+
+    left_fragments = [box for box in lower_boxes if box != right_candidate]
+    if not left_fragments:
+        return boxes
+
+    fragment_right = max(box[2] for box in left_fragments)
+    if fragment_right >= right_candidate[0]:
+        return boxes
+
+    fragment_top = min(box[1] for box in left_fragments)
+    fragment_bottom = max(box[3] for box in left_fragments)
+    if fragment_top > int(page_height * 0.72):
+        return boxes
+    if fragment_bottom < int(page_height * 0.92):
+        return boxes
+
+    primary_fragments = [box for box in left_fragments if (box[2] - box[0]) >= int(page_width * 0.12)]
+    if not primary_fragments:
+        primary_fragments = left_fragments
+
+    narrow_edge_fragments = [
+        box
+        for box in primary_fragments
+        if box[0] <= int(page_width * 0.02) and (box[2] - box[0]) <= int(page_width * 0.20)
+    ]
+    if len(narrow_edge_fragments) >= 2:
+        filtered = [box for box in primary_fragments if box not in narrow_edge_fragments]
+        if filtered:
+            primary_fragments = filtered
+
+    merged_left = (
+        min(box[0] for box in primary_fragments),
+        min(box[1] for box in primary_fragments),
+        max(box[2] for box in primary_fragments),
+        max(box[3] for box in primary_fragments),
+    )
+    return upper_boxes + [right_candidate, merged_left]
+
+
 
 
 def _should_merge_top_row_pair(

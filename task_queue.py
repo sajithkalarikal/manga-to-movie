@@ -1,9 +1,11 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 
 from arq.connections import ArqRedis, RedisSettings, create_pool
 
 from config import get_settings
+from modules.database import upsert_job
 
 
 async def get_redis_pool() -> ArqRedis:
@@ -26,6 +28,7 @@ async def set_task_status(redis: ArqRedis, request_id: str, payload: dict[str, o
     settings = get_settings()
     key = f"task:{request_id}"
     await redis.set(key, json.dumps(payload), ex=settings.task_result_ttl_seconds)
+    await asyncio.to_thread(upsert_job, settings, payload)
 
 
 async def get_task_status(redis: ArqRedis, request_id: str) -> dict[str, object] | None:

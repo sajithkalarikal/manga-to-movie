@@ -15,5 +15,6 @@ pydantic-settings>=2.3.0
 numpy>=2.0.0
 torch>=2.3.0
 torchvision>=0.18.0
+pycocotools>=2.0.8
 arq>=0.26.0
 redis>=5.0.0

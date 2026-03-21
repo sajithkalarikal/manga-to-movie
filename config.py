@@ -114,6 +114,17 @@ class Settings:
     bubble_detector_weights: str = ""
     bubble_detector_score_threshold: float = 0.45
     bubble_detector_max_detections: int = 8
+    bubble_detector_device: str = "auto"
+    bubble_detector_max_side: int = 960
+    panel_detector_weights: str = ""
+    panel_detector_score_threshold: float = 0.45
+    panel_detector_max_detections: int = 16
+    panel_detector_device: str = "auto"
+    panel_detector_max_side: int = 960
+    annotation_dataset_root: Path = Path("../Manga Bubble.v4i.coco")
+    annotation_output_dir: Path = Path("outputs/dataset_annotations")
+    annotation_database_dir: Path = Path("outputs/dataset_annotations/database")
+    sql_database_path: Path = Path("outputs/app_state.sqlite3")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -169,6 +180,19 @@ class Settings:
             bubble_detector_weights=_env_str("BUBBLE_DETECTOR_WEIGHTS", ""),
             bubble_detector_score_threshold=_env_float("BUBBLE_DETECTOR_SCORE_THRESHOLD", 0.45),
             bubble_detector_max_detections=_env_int("BUBBLE_DETECTOR_MAX_DETECTIONS", 8),
+            bubble_detector_device=_env_str("BUBBLE_DETECTOR_DEVICE", "auto").strip().lower(),
+            bubble_detector_max_side=_env_int("BUBBLE_DETECTOR_MAX_SIDE", 960),
+            panel_detector_weights=_env_str("PANEL_DETECTOR_WEIGHTS", ""),
+            panel_detector_score_threshold=_env_float("PANEL_DETECTOR_SCORE_THRESHOLD", 0.45),
+            panel_detector_max_detections=_env_int("PANEL_DETECTOR_MAX_DETECTIONS", 16),
+            panel_detector_device=_env_str("PANEL_DETECTOR_DEVICE", "auto").strip().lower(),
+            panel_detector_max_side=_env_int("PANEL_DETECTOR_MAX_SIDE", 960),
+            annotation_dataset_root=Path(_env_str("ANNOTATION_DATASET_ROOT", "../Manga Bubble.v4i.coco")).expanduser(),
+            annotation_output_dir=Path(_env_str("ANNOTATION_OUTPUT_DIR", "outputs/dataset_annotations")).expanduser(),
+            annotation_database_dir=Path(
+                _env_str("ANNOTATION_DATABASE_DIR", "outputs/dataset_annotations/database")
+            ).expanduser(),
+            sql_database_path=Path(_env_str("SQL_DATABASE_PATH", "outputs/app_state.sqlite3")).expanduser(),
         )
 
     def prepare_directories(self) -> None:
@@ -176,6 +200,9 @@ class Settings:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.annotation_output_dir.mkdir(parents=True, exist_ok=True)
+        self.annotation_database_dir.mkdir(parents=True, exist_ok=True)
+        self.sql_database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache(maxsize=1)

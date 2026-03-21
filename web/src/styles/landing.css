@@ -1,0 +1,283 @@
+.kokyu-paper-noise {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(220, 20, 60, 0.11), transparent 18%),
+    radial-gradient(circle at 78% 16%, rgba(0, 188, 212, 0.12), transparent 18%),
+    radial-gradient(circle at 50% 85%, rgba(10, 10, 10, 0.08), transparent 24%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 248, 248, 0.98));
+  opacity: 0.95;
+}
+
+.dark .kokyu-paper-noise {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255, 23, 68, 0.2), transparent 22%),
+    radial-gradient(circle at 82% 18%, rgba(0, 229, 255, 0.16), transparent 18%),
+    radial-gradient(circle at 50% 85%, rgba(255, 255, 255, 0.05), transparent 24%),
+    linear-gradient(135deg, rgba(9, 9, 9, 0.98), rgba(18, 18, 18, 0.98));
+}
+
+.kokyu-ink-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(10, 10, 10, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(10, 10, 10, 0.03) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(circle at center, black 42%, transparent 92%);
+}
+
+.dark .kokyu-ink-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+.kokyu-type-line,
+.kokyu-script-line,
+.kokyu-meaning-line,
+.kokyu-type-ghost,
+.kokyu-script-ghost,
+.kokyu-meaning-ghost {
+  display: inline-block;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.kokyu-copy-stage {
+  min-height: 20rem;
+}
+
+.kokyu-type-shell,
+.kokyu-script-shell,
+.kokyu-meaning-shell {
+  position: relative;
+  display: inline-grid;
+  align-items: end;
+}
+
+.kokyu-type-ghost,
+.kokyu-script-ghost,
+.kokyu-meaning-ghost {
+  visibility: hidden;
+}
+
+.kokyu-type-line {
+  position: absolute;
+  inset: 0 auto auto 0;
+  overflow: hidden;
+  white-space: nowrap;
+  width: 0;
+  animation:
+    kokyu-type 1.7s steps(12, end) 0.25s forwards,
+    kokyu-caret 0.85s step-end infinite;
+  border-right: 2px solid color-mix(in srgb, var(--crimson) 72%, transparent);
+  font-family: 'Zen Old Mincho', 'Times New Roman', serif;
+  line-height: 1.06;
+  padding: 0.06em 0.14em 0.14em 0;
+}
+
+.kokyu-script-line {
+  position: absolute;
+  inset: 0 auto auto 0;
+  animation: kokyu-fade-rise 0.7s ease 0.12s forwards;
+  font-family: 'Sawarabi Mincho', serif;
+  letter-spacing: 0.16em;
+  line-height: 1.2;
+  padding-bottom: 0.1em;
+  opacity: 0;
+}
+
+.kokyu-meaning-line {
+  position: absolute;
+  inset: 0 auto auto 0;
+  animation: kokyu-fade-rise 0.7s ease 1.55s forwards;
+  font-family: 'Sawarabi Mincho', serif;
+  line-height: 1.15;
+  padding-bottom: 0.08em;
+  opacity: 0;
+}
+
+.kokyu-origami-panel {
+  width: min(32rem, 82vw);
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  border-radius: 2rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.58));
+  box-shadow: 0 28px 68px rgba(10, 10, 10, 0.08);
+  backdrop-filter: blur(16px);
+  padding: clamp(1.25rem, 2vw, 1.75rem);
+}
+
+.dark .kokyu-origami-panel {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(22, 22, 22, 0.76), rgba(12, 12, 12, 0.62));
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.34);
+}
+
+.kokyu-origami-stage {
+  position: relative;
+  width: min(28rem, 72vw);
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+}
+
+.kokyu-origami-halo {
+  position: absolute;
+  inset: 12%;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.8) 36%, rgba(255, 255, 255, 0) 74%);
+  filter: blur(18px);
+}
+
+.dark .kokyu-origami-halo {
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 36%, rgba(255, 255, 255, 0) 76%);
+}
+
+.kokyu-origami-mark {
+  position: relative;
+  width: 78%;
+  aspect-ratio: 1 / 1;
+  filter: drop-shadow(0 30px 45px rgba(0, 0, 0, 0.12));
+  animation: kokyu-float 5.5s ease-in-out infinite;
+}
+
+.kokyu-fold {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  background:
+    radial-gradient(circle at 22% 26%, rgba(255, 255, 255, 0.7), transparent 16%),
+    radial-gradient(circle at 74% 18%, rgba(10, 10, 10, 0.1), transparent 20%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(239, 239, 239, 0.94));
+  overflow: hidden;
+}
+
+.kokyu-fold::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.28;
+  background-image:
+    radial-gradient(circle at 14% 18%, rgba(10, 10, 10, 0.16) 0 1px, transparent 1px),
+    radial-gradient(circle at 62% 56%, rgba(10, 10, 10, 0.12) 0 1px, transparent 1px);
+  background-size: 10px 10px, 14px 14px;
+  mix-blend-mode: multiply;
+}
+
+.dark .kokyu-fold {
+  border-color: rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at 22% 26%, rgba(255, 255, 255, 0.14), transparent 16%),
+    radial-gradient(circle at 74% 18%, rgba(0, 0, 0, 0.32), transparent 20%),
+    linear-gradient(145deg, rgba(36, 36, 36, 0.96), rgba(18, 18, 18, 0.94));
+}
+
+.dark .kokyu-fold::after {
+  opacity: 0.18;
+  mix-blend-mode: screen;
+}
+
+.kokyu-fold-a {
+  clip-path: polygon(14% 50%, 50% 12%, 64% 44%, 40% 58%);
+  transform: rotate(-6deg);
+}
+
+.kokyu-fold-b {
+  clip-path: polygon(40% 58%, 64% 44%, 88% 50%, 56% 68%);
+  transform: rotate(4deg);
+}
+
+.kokyu-fold-c {
+  clip-path: polygon(28% 56%, 56% 68%, 48% 90%, 16% 76%);
+  transform: rotate(-3deg);
+}
+
+.kokyu-fold-d {
+  clip-path: polygon(50% 12%, 74% 22%, 88% 50%, 64% 44%);
+  transform: rotate(8deg);
+}
+
+.kokyu-fold-line {
+  position: absolute;
+  background: linear-gradient(90deg, transparent, rgba(10, 10, 10, 0.26), transparent);
+}
+
+.kokyu-fold-line-a {
+  inset: 41% 18% auto;
+  height: 1px;
+  transform: rotate(-10deg);
+}
+
+.kokyu-fold-line-b {
+  inset: 60% 26% auto;
+  height: 1px;
+  transform: rotate(18deg);
+}
+
+.dark .kokyu-fold-line {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+}
+
+.kokyu-origami-caption {
+  position: absolute;
+  right: -2%;
+  bottom: 4%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.kokyu-caption-jp {
+  font-family: 'Zen Old Mincho', serif;
+  font-size: clamp(2.4rem, 4vw, 4rem);
+  line-height: 1;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--foreground) 92%, var(--crimson) 8%);
+}
+
+.kokyu-caption-en {
+  font-size: 0.8rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+@keyframes kokyu-type {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@keyframes kokyu-caret {
+  50% {
+    border-color: transparent;
+  }
+}
+
+@keyframes kokyu-float {
+  0%,
+  100% {
+    transform: translateY(0px) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(1deg);
+  }
+}
+
+@keyframes kokyu-fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

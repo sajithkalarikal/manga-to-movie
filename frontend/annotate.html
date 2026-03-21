@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Manga Dataset Annotation Workspace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Fraunces:opsz,wght@9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="page-header page-header-split">
+        <div>
+          <p class="eyebrow">Manga To Video Studio</p>
+          <h1>Annotation Workspace</h1>
+          <p class="page-subtitle">Label the existing dataset with `speech_bubble`, `narration_box`, and `sfx`. Save image-level corrections here, then export a multi-class COCO dataset for retraining.</p>
+        </div>
+        <div class="header-actions">
+          <a class="header-link" href="/ui">Back To Review</a>
+        </div>
+      </header>
+
+      <section class="toolbar card">
+        <div class="toolbar-form annotation-toolbar-form">
+          <label class="mode-picker">
+            <span class="mode-picker-label">Dataset</span>
+            <span class="mode-picker-hint">Choose which prepared dataset folder to annotate.</span>
+            <select id="dataset-root"></select>
+          </label>
+          <label class="mode-picker">
+            <span class="mode-picker-label">Split</span>
+            <span class="mode-picker-hint">Choose which dataset split to annotate.</span>
+            <select id="dataset-split">
+              <option value="train" selected>Train</option>
+              <option value="valid">Valid</option>
+              <option value="test">Test</option>
+            </select>
+          </label>
+          <label class="mode-picker">
+            <span class="mode-picker-label">Current Class</span>
+            <span class="mode-picker-hint">New boxes use the selected label.</span>
+            <select id="annotation-class">
+              <option value="speech_bubble" selected>speech_bubble</option>
+              <option value="narration_box">narration_box</option>
+              <option value="sfx">sfx</option>
+            </select>
+          </label>
+          <label class="mode-picker">
+            <span class="mode-picker-label">Shape Mode</span>
+            <span class="mode-picker-hint">Draw rectangles or place polygon points for tighter outlines.</span>
+            <select id="annotation-shape-mode">
+              <option value="rect" selected>Rectangle</option>
+              <option value="polygon">Polygon</option>
+            </select>
+          </label>
+          <label class="mode-picker">
+            <span class="mode-picker-label">View Mode</span>
+            <span class="mode-picker-hint">Use the validated for train queue to walk the highest-priority files first.</span>
+            <select id="annotation-view-mode">
+              <option value="all" selected>All Images</option>
+              <option value="review">validated for train</option>
+            </select>
+          </label>
+          <label class="mode-picker">
+            <span class="mode-picker-label">Queue Item</span>
+            <span class="mode-picker-hint">Jump directly to a queued file when validated for train mode is active.</span>
+            <select id="queue-item-select">
+              <option value="">Load validated for train queue first</option>
+            </select>
+          </label>
+          <div class="annotation-nav">
+            <button id="prev-image-button" type="button" class="secondary-button">Previous</button>
+            <button id="next-image-button" type="button" class="secondary-button">Next</button>
+          </div>
+          <div class="annotation-nav">
+            <button id="save-annotations-button" type="button">Save Annotations</button>
+            <button id="export-dataset-button" type="button" class="secondary-button">Export COCO Dataset</button>
+            <button id="export-validated-bubble-button" type="button" class="secondary-button">Export Validated Bubble Only</button>
+          </div>
+          <div class="annotation-nav">
+            <button id="undo-annotation-point-button" type="button" class="secondary-button">Undo Point</button>
+            <button id="finish-annotation-shape-button" type="button" class="secondary-button">Finish Polygon</button>
+          </div>
+          <p id="annotation-status" class="status-text">Loading dataset…</p>
+        </div>
+      </section>
+
+      <section class="overview-grid annotation-workspace-grid">
+        <article class="card">
+          <div class="card-header">
+            <p class="section-kicker">Canvas</p>
+            <h2>Draw And Edit Boxes</h2>
+          </div>
+          <div id="annotation-meta" class="meta-strip"></div>
+          <p class="panel-help">Click a shape or a list row to select it. In Rectangle mode, drag to create a box. In Polygon mode, click to place points and finish the shape with the button above. Saved polygons still export training-ready bounding boxes.</p>
+          <div class="annotation-canvas-shell">
+            <canvas id="annotation-canvas"></canvas>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <p class="section-kicker">Annotations</p>
+            <h2>Current Image Labels</h2>
+          </div>
+          <div id="annotation-inspector" class="annotation-inspector">
+            <p class="empty-state">Select a box on the canvas or from the list to edit it.</p>
+          </div>
+          <div id="annotation-list" class="stack-list">
+            <p class="empty-state">Annotations will appear here.</p>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="/static/annotate.js?v=20260319d" defer></script>
+  </body>
+</html>

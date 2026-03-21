@@ -29,6 +29,36 @@
           <h2>Default Bubble Detector Review</h2>
         </div>
         <div id="override-meta" class="meta-strip" hidden></div>
+        <div id="panel-annotation-section" class="panel-annotation-section" hidden>
+          <div class="panel-annotation-header">
+            <div>
+              <p class="section-kicker">Panel Annotation</p>
+              <h3>Correct Panel Boxes</h3>
+              <p class="panel-help">Draw the correct panel boxes on the full page. Use Rectangle for standard panels and Polygon for diagonal or irregular panels. Delete bad ones from the list if the detector split the page incorrectly.</p>
+            </div>
+            <div class="panel-annotation-actions">
+              <label class="override-field">
+                <span>Shape Mode</span>
+                <select id="panel-shape-mode">
+                  <option value="rect">Rectangle</option>
+                  <option value="polygon">Polygon</option>
+                </select>
+              </label>
+              <button id="undo-panel-point-button" type="button" class="secondary-button">Undo Point</button>
+              <button id="finish-panel-shape-button" type="button" class="secondary-button">Finish Shape</button>
+              <button id="clear-panel-boxes-button" type="button" class="secondary-button">Reset To Model Boxes</button>
+            </div>
+          </div>
+          <div class="panel-annotation-layout">
+            <div class="annotation-canvas-shell">
+              <canvas id="panel-annotation-canvas"></canvas>
+            </div>
+            <div class="stack-list" id="panel-box-list">
+              <p class="empty-state">Run Phase 1 first to start correcting panel boxes.</p>
+            </div>
+          </div>
+        </div>
+        <p class="panel-help">Use the box annotation section inside each panel to draw `speech`, `narration`, or `sfx` regions directly on the image. The counts below will auto-fill from those boxes, and you can still fine-tune them manually if needed.</p>
         <div class="override-toolbar">
           <button id="apply-overrides-button" type="button">Apply Overrides</button>
           <button id="save-overrides-button" type="button">Save Overrides</button>
