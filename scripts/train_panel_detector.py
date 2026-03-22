@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 
+from config import get_settings
+from modules.database import record_training_result, sync_dataset_split_from_coco
 from train_bubble_detector import (
     COCODetectionDataset,
     build_model,
     build_split_dataset,
+    count_split_annotations,
     collate_fn,
     detect_class_names,
     load_init_weights,
@@ -49,7 +53,10 @@ def main() -> None:
     device = select_device(args.device)
     print(f"Using device: {device}")
 
+    settings = get_settings()
     dataset_roots = [path.expanduser().resolve() for path in args.dataset_root]
+    for dataset_root in dataset_roots:
+        sync_dataset_split_from_coco(settings, dataset_root)
     detected = args.class_names or detect_class_names(dataset_roots)
     class_names = [name for name in detected if name != "background"] or [DEFAULT_PANEL_CLASS]
     if DEFAULT_PANEL_CLASS not in class_names:
@@ -116,6 +123,7 @@ def main() -> None:
     elif args.init_weights is not None:
         load_init_weights(model, args.init_weights.expanduser().resolve(), device)
 
+    started_at = datetime.now(timezone.utc).isoformat()
     for epoch in range(start_epoch, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, device, epoch)
         valid_loss = validate(model, valid_loader, device)
@@ -143,6 +151,32 @@ def main() -> None:
             torch.save(checkpoint, args.output)
             print(f"Saved best checkpoint to {args.output}")
 
+    finished_at = datetime.now(timezone.utc).isoformat()
+    train_annotation_count = count_split_annotations(dataset_roots, "train", class_names)
+    record_training_result(
+        settings,
+        run_key=f"{args.output.resolve()}",
+        model_type="panel_detector",
+        dataset_name=",".join(path.name for path in dataset_roots),
+        train_split_version=None,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        train_image_count=len(train_dataset),
+        train_annotation_count=train_annotation_count,
+        best_checkpoint_path=args.output if args.output.exists() else None,
+        final_checkpoint_path=latest_path if latest_path.exists() else None,
+        best_train_loss=best_valid_loss if best_valid_loss != float("inf") else None,
+        status="completed",
+        metrics={
+            "history": history,
+            "class_names": class_names,
+            "dataset_roots": [str(path) for path in dataset_roots],
+            "device": str(device),
+        },
+        started_at=started_at,
+        finished_at=finished_at,
+    )
     print("Panel detector training complete.")
 
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 
+from config import get_settings
+from modules.database import record_validation_result, sync_dataset_split_from_coco
 from eval_bubble_detector import evaluate_coco, load_checkpoint, run_predictions, update_current_metrics_snapshot
 from train_bubble_detector import COCODetectionDataset, collate_fn, select_device
 
@@ -32,6 +35,8 @@ def main() -> None:
     if not args.weights.exists():
         raise FileNotFoundError(f"Missing detector weights: {args.weights}")
 
+    settings = get_settings()
+    sync_dataset_split_from_coco(settings, args.dataset_root)
     device = select_device(args.device)
     model, checkpoint, class_names = load_checkpoint(args.weights, device)
     dataset = COCODetectionDataset(split_dir, class_names[1:])
@@ -65,6 +70,21 @@ def main() -> None:
     metrics_path = args.output_dir / f"metrics_{run_name}.json"
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
     snapshot_path = update_current_metrics_snapshot(args.output_dir)
+    record_validation_result(
+        settings,
+        training_result_id=None,
+        dataset_name=args.dataset_root.name,
+        split_name="validation" if args.split == "valid" else args.split,
+        image_count=len(dataset),
+        annotation_count=sum(len(items) for items in dataset.annotations_by_image.values()),
+        loss=None,
+        map_50=metrics.get("mAP_50"),
+        map_50_95=metrics.get("mAP_50_95"),
+        precision_score=metrics.get("precision"),
+        recall_score=metrics.get("recall"),
+        metrics=metrics_payload,
+        evaluated_at=datetime.now(timezone.utc).isoformat(),
+    )
 
     print(json.dumps(metrics_payload, indent=2))
     print(f"Predictions saved to {predictions_path}")

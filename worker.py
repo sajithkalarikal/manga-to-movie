@@ -11,6 +11,7 @@ from arq.connections import RedisSettings
 from arq.worker import func
 
 from config import Settings, get_settings
+from modules.database import initialize_database
 from pipeline import MangaVideoPipeline
 from task_queue import build_status_payload, get_redis_pool, set_task_status
 
@@ -42,6 +43,7 @@ async def _worker_heartbeat_loop(ctx: dict) -> None:
 
 async def startup(ctx: dict) -> None:
     settings = get_settings()
+    initialize_database(settings)
     ctx["settings"] = settings
     ctx["pipeline"] = MangaVideoPipeline(settings)
     ctx["redis"] = await get_redis_pool()

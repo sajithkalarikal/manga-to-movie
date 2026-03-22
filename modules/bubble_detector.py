@@ -135,6 +135,8 @@ class BubbleDetector:
             return "speech_bubble"
         if name == "objects":
             return "speech_bubble"
+        if name == "text":
+            return "speech_bubble"
         return name
 
     def _resize_for_inference(self, image_bgr: np.ndarray) -> tuple[np.ndarray, float]:

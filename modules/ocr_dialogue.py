@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class OCRDialogueService:
-    TESSERACT_CHAR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-'\")("
+    # Keep this config shell-safe for pytesseract's internal argument splitting.
+    TESSERACT_CHAR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-"
+    SHORT_WORD_WHITELIST = {"A", "I"}
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -104,20 +106,26 @@ class OCRDialogueService:
     def _analyze_panel_text_sync(image_path: Path, region_hint: PanelSceneFeatures | None = None) -> dict[str, str | int]:
         with Image.open(image_path) as image:
             bgr = cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR)
-        hinted_regions: list[tuple[int, int, int, int]] = []
+        hinted_regions: list[dict[str, object]] = []
         if region_hint is not None:
-            hinted_regions = [*region_hint.speech_boxes, *region_hint.narration_boxes, *region_hint.sfx_boxes]
-        text_regions = hinted_regions or OCRDialogueService._detect_text_regions(bgr)
+            hinted_regions = OCRDialogueService._typed_regions_from_features(region_hint)
+        text_regions = hinted_regions or [
+            {"class_name": "speech", "bbox": box}
+            for box in OCRDialogueService._detect_text_regions(bgr)
+        ]
         parts = OCRDialogueService._ocr_parts_from_bgr(
             bgr,
             limit=max(1, len(text_regions) or 1),
-            region_boxes=text_regions,
+            region_items=text_regions,
         )
         joined_text = " ".join(parts).strip() or "[no dialogue detected]"
         return {
             "text": joined_text,
             "text_regions": len(text_regions),
-            "text_role": OCRDialogueService._classify_text_role(text_regions, joined_text),
+            "text_role": OCRDialogueService._classify_text_role(
+                [tuple(item["bbox"]) for item in text_regions],
+                joined_text,
+            ),
         }
 
     @staticmethod
@@ -125,26 +133,30 @@ class OCRDialogueService:
         bgr: np.ndarray,
         limit: int = 2,
         region_boxes: list[tuple[int, int, int, int]] | None = None,
+        region_items: list[dict[str, object]] | None = None,
     ) -> list[str]:
         h, w = bgr.shape[:2]
-        boxes = region_boxes[:] if region_boxes else OCRDialogueService._detect_text_regions(bgr)
-        if not boxes:
-            boxes = [(0, 0, w, int(h * 0.6))]
+        items: list[dict[str, object]]
+        if region_items is not None:
+            items = [dict(item) for item in region_items]
+        elif region_boxes is not None:
+            items = [{"class_name": "speech", "bbox": box} for box in region_boxes]
+        else:
+            items = [{"class_name": "speech", "bbox": box} for box in OCRDialogueService._detect_text_regions(bgr)]
+        if not items:
+            items = [{"class_name": "speech", "bbox": (0, 0, w, int(h * 0.6))}]
 
         ocr_engine = get_ocr_engine()
         corrector = get_corrector()
         outputs: list[str] = []
-        normalized_boxes = OCRDialogueService._normalize_region_boxes(boxes, w, h)
-        for x, y, bw, bh in normalized_boxes:
+        normalized_items = OCRDialogueService._normalize_region_items(items, w, h)
+        for item in normalized_items:
+            class_name = str(item.get("class_name", "speech"))
+            x, y, bw, bh = item["bbox"]
             region = bgr[y : y + bh, x : x + bw]
             if region.size == 0:
                 continue
-            center_x = x + (bw // 2)
-            is_left_box = center_x < int(w * 0.45)
-            if is_left_box:
-                candidates = OCRDialogueService._collect_left_box_candidates(region, ocr_engine)
-            else:
-                candidates = OCRDialogueService._collect_candidates(region, ocr_engine)
+            candidates = OCRDialogueService._collect_candidates_for_class(region, class_name, ocr_engine)
             if not candidates:
                 continue
             best = OCRDialogueService._choose_best_candidate(candidates)
@@ -154,9 +166,10 @@ class OCRDialogueService:
             best_confidence = float(best.get("confidence", 0.0))
             if best_score < 1.0 and best_confidence < 55.0:
                 continue
-            cleaned = OCRDialogueService._clean_ocr_line(str(best["text"]))
+            cleaned = OCRDialogueService._clean_ocr_line(str(best["text"]), class_name=class_name)
             if cleaned:
-                cleaned = corrector.correct_line(cleaned)
+                if class_name != "sfx":
+                    cleaned = corrector.correct_line(cleaned)
                 cleaned = OCRDialogueService._finalize_ocr_line(cleaned)
             if not cleaned:
                 continue
@@ -166,6 +179,48 @@ class OCRDialogueService:
             if len(outputs) >= max(1, limit):
                 break
         return outputs
+
+    @staticmethod
+    def _typed_regions_from_features(feature: PanelSceneFeatures) -> list[dict[str, object]]:
+        typed: list[dict[str, object]] = []
+        typed.extend({"class_name": "speech", "bbox": box} for box in feature.speech_boxes)
+        typed.extend({"class_name": "narration", "bbox": box} for box in feature.narration_boxes)
+        typed.extend({"class_name": "sfx", "bbox": box} for box in feature.sfx_boxes)
+        return typed
+
+    @staticmethod
+    def _normalize_region_items(
+        items: list[dict[str, object]],
+        image_width: int,
+        image_height: int,
+    ) -> list[dict[str, object]]:
+        normalized: list[dict[str, object]] = []
+        for item in items:
+            box = item.get("bbox")
+            if not isinstance(box, (list, tuple)) or len(box) != 4:
+                continue
+            x1, y1, x2_or_w, y2_or_h = [int(round(value)) for value in box]
+            if x2_or_w > x1 and y2_or_h > y1:
+                x = x1
+                y = y1
+                w = x2_or_w - x1
+                h = y2_or_h - y1
+            else:
+                x = x1
+                y = y1
+                w = x2_or_w
+                h = y2_or_h
+            x = max(0, min(x, image_width))
+            y = max(0, min(y, image_height))
+            w = max(1, min(w, image_width - x))
+            h = max(1, min(h, image_height - y))
+            normalized.append(
+                {
+                    "class_name": str(item.get("class_name", "speech")),
+                    "bbox": (x, y, w, h),
+                }
+            )
+        return normalized
 
     @staticmethod
     def _normalize_region_boxes(
@@ -249,6 +304,15 @@ class OCRDialogueService:
         if not candidates or best_confidence < 70.0 or best_score < 1.5:
             retry_psm_modes = [5, 11, 6] if is_vertical else [6, 11, 4]
             OCRDialogueService._collect_tesseract_candidates(candidates, variants, retry_psm_modes)
+        if not candidates or (
+            max((float(candidate.get("confidence", 0.0)) for candidate in candidates), default=0.0) < 55.0
+            and max((OCRDialogueService._score_candidate(str(candidate.get("text", ""))) for candidate in candidates), default=0.0) < 1.0
+        ):
+            OCRDialogueService._collect_tesseract_candidates(
+                candidates,
+                OCRDialogueService._invert_variants(variants[:4]),
+                [11, 6, 4],
+            )
 
         candidates = OCRDialogueService._deduplicate_text_candidates(candidates)
         return candidates
@@ -271,18 +335,80 @@ class OCRDialogueService:
         return candidates
 
     @staticmethod
-    def _preprocess_variants(img_bgr: np.ndarray) -> list[np.ndarray]:
-        prepared = OCRDialogueService._prepare_region_for_ocr(img_bgr)
+    def _collect_candidates_for_class(region_bgr: np.ndarray, class_name: str, ocr_engine) -> list[dict[str, object]]:
+        normalized_class = class_name.strip().lower()
+        if normalized_class == "narration":
+            return OCRDialogueService._collect_narration_candidates(region_bgr, ocr_engine)
+        if normalized_class == "sfx":
+            return OCRDialogueService._collect_sfx_candidates(region_bgr, ocr_engine)
+        return OCRDialogueService._collect_speech_candidates(region_bgr, ocr_engine)
+
+    @staticmethod
+    def _collect_speech_candidates(region_bgr: np.ndarray, ocr_engine) -> list[dict[str, object]]:
+        h, w = region_bgr.shape[:2]
+        is_tall_box = h > (w * 1.25)
+        if is_tall_box:
+            return OCRDialogueService._collect_left_box_candidates(region_bgr, ocr_engine)
+        return OCRDialogueService._collect_candidates(region_bgr, ocr_engine)
+
+    @staticmethod
+    def _collect_narration_candidates(region_bgr: np.ndarray, ocr_engine) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        variants = OCRDialogueService._preprocess_variants(region_bgr, class_name="narration")
+        for variant in variants[:4]:
+            text = OCRDialogueService._normalize_spaces(ocr_engine.read(variant))
+            OCRDialogueService._append_candidate(candidates, text, confidence=60.0, source="narration-engine")
+        OCRDialogueService._collect_tesseract_candidates(candidates, variants, [6, 4, 11, 5])
+        if not candidates or (
+            max((float(candidate.get("confidence", 0.0)) for candidate in candidates), default=0.0) < 55.0
+            and max((OCRDialogueService._score_candidate(str(candidate.get("text", ""))) for candidate in candidates), default=0.0) < 1.0
+        ):
+            OCRDialogueService._collect_tesseract_candidates(
+                candidates,
+                OCRDialogueService._invert_variants(variants[:5]),
+                [6, 4, 11],
+            )
+        return OCRDialogueService._deduplicate_text_candidates(candidates)
+
+    @staticmethod
+    def _collect_sfx_candidates(region_bgr: np.ndarray, ocr_engine) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        variants = OCRDialogueService._preprocess_variants(region_bgr, class_name="sfx")
+        OCRDialogueService._collect_tesseract_candidates(candidates, variants, [11, 6, 13], use_dictionary=False)
+        for variant in variants[:2]:
+            text = OCRDialogueService._normalize_spaces(ocr_engine.read(variant))
+            OCRDialogueService._append_candidate(candidates, text, confidence=55.0, source="sfx-engine")
+        if not candidates or (
+            max((float(candidate.get("confidence", 0.0)) for candidate in candidates), default=0.0) < 55.0
+            and max((OCRDialogueService._score_candidate(str(candidate.get("text", ""))) for candidate in candidates), default=0.0) < 0.8
+        ):
+            OCRDialogueService._collect_tesseract_candidates(
+                candidates,
+                OCRDialogueService._invert_variants(variants[:6]),
+                [11, 13, 6],
+                use_dictionary=False,
+            )
+        return OCRDialogueService._deduplicate_text_candidates(candidates)
+
+    @staticmethod
+    def _preprocess_variants(img_bgr: np.ndarray, class_name: str = "speech") -> list[np.ndarray]:
+        prepared = OCRDialogueService._prepare_region_for_ocr(img_bgr, class_name=class_name)
         gray = cv2.cvtColor(prepared, cv2.COLOR_BGR2GRAY)
-        denoised = cv2.medianBlur(gray, 3)
+        denoised = cv2.medianBlur(gray, 5 if class_name == "narration" else 3)
         std = cv2.convertScaleAbs(denoised, alpha=1.0, beta=0)
         hi = cv2.convertScaleAbs(denoised, alpha=1.35, beta=5)
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(4, 4))
+        clahe_gray = clahe.apply(denoised)
         blurred = cv2.GaussianBlur(hi, (3, 3), 0)
         dilated = cv2.dilate(hi, np.ones((2, 2), np.uint8), iterations=1)
         eroded = cv2.erode(hi, np.ones((2, 2), np.uint8), iterations=1)
         _, otsu = cv2.threshold(hi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         thick_otsu = cv2.dilate(otsu, np.ones((2, 2), np.uint8), iterations=1)
         light_thick = cv2.dilate(denoised, np.ones((2, 2), np.uint8), iterations=1)
+        _, global_binary = cv2.threshold(hi, 127, 255, cv2.THRESH_BINARY)
+        _, cc_thresh = cv2.threshold(clahe_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        cc_clean = OCRDialogueService._keep_letter_sized_blobs(cv2.bitwise_not(cc_thresh))
+        cc_variant = cv2.bitwise_not(cc_clean)
 
         # Hatch-line suppression.
         thresh = cv2.adaptiveThreshold(
@@ -294,9 +420,40 @@ class OCRDialogueService:
             8,
         )
         opened = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3)))
+        morph_closed = cv2.morphologyEx(
+            thresh,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)),
+            iterations=1,
+        )
         closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)))
         cleaned = cv2.bitwise_not(closed)
-        return [std, hi, blurred, dilated, eroded, light_thick, otsu, thick_otsu, thresh, cleaned]
+        screentone_clean = OCRDialogueService._suppress_screentones(gray, blur_size=3, block_size=11, c_value=2)
+        screentone_clean_strong = OCRDialogueService._suppress_screentones(gray, blur_size=5, block_size=15, c_value=4)
+        variants = [
+            std,
+            hi,
+            clahe_gray,
+            blurred,
+            dilated,
+            eroded,
+            light_thick,
+            otsu,
+            thick_otsu,
+            thresh,
+            morph_closed,
+            cleaned,
+            screentone_clean,
+            screentone_clean_strong,
+            global_binary,
+            cc_variant,
+        ]
+        if class_name == "sfx":
+            invert = cv2.bitwise_not(hi)
+            invert_otsu = cv2.bitwise_not(otsu)
+            thick_sfx = cv2.dilate(hi, np.ones((3, 3), np.uint8), iterations=1)
+            variants.extend([thick_sfx, invert, invert_otsu])
+        return variants
 
     @staticmethod
     def _extract_box_interior(crop_bgr: np.ndarray, inset_px: int = 6) -> np.ndarray:
@@ -354,12 +511,15 @@ class OCRDialogueService:
         _, cc_thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         cc_clean = OCRDialogueService._keep_letter_sized_blobs(cv2.bitwise_not(cc_thresh))
         cc_variant = cv2.bitwise_not(cc_clean)
+        screentone_clean = OCRDialogueService._suppress_screentones(gray, blur_size=3, block_size=11, c_value=2)
+        screentone_clean_strong = OCRDialogueService._suppress_screentones(gray, blur_size=5, block_size=15, c_value=4)
 
-        return [gray, otsu, thick_otsu, opened, clahe_otsu, cc_variant]
+        return [gray, otsu, thick_otsu, opened, clahe_otsu, cc_variant, screentone_clean, screentone_clean_strong]
 
     @staticmethod
-    def _prepare_region_for_ocr(crop_bgr: np.ndarray) -> np.ndarray:
-        crop_bgr = OCRDialogueService._inset_crop(crop_bgr)
+    def _prepare_region_for_ocr(crop_bgr: np.ndarray, class_name: str = "speech") -> np.ndarray:
+        inset_ratio = 0.02 if class_name == "sfx" else 0.08 if class_name == "narration" else 0.06
+        crop_bgr = OCRDialogueService._inset_crop(crop_bgr, ratio=inset_ratio)
         h, w = crop_bgr.shape[:2]
         longest_side = max(h, w)
         scale = 1
@@ -381,12 +541,35 @@ class OCRDialogueService:
         )
 
     @staticmethod
-    def _inset_crop(crop_bgr: np.ndarray) -> np.ndarray:
+    def _inset_crop(crop_bgr: np.ndarray, ratio: float = 0.05) -> np.ndarray:
         h, w = crop_bgr.shape[:2]
-        inset = min(12, max(4, int(min(h, w) * 0.05)))
+        inset = min(16, max(4, int(min(h, w) * ratio)))
         if h <= inset * 2 or w <= inset * 2:
             return crop_bgr
         return crop_bgr[inset : h - inset, inset : w - inset]
+
+    @staticmethod
+    def _suppress_screentones(
+        gray: np.ndarray,
+        *,
+        blur_size: int = 3,
+        block_size: int = 11,
+        c_value: int = 2,
+    ) -> np.ndarray:
+        # Median blur softens screentone dots while keeping thicker glyph strokes intact.
+        blurred = cv2.medianBlur(gray, blur_size)
+        return cv2.adaptiveThreshold(
+            blurred,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            block_size,
+            c_value,
+        )
+
+    @staticmethod
+    def _invert_variants(variants: list[np.ndarray]) -> list[np.ndarray]:
+        return [cv2.bitwise_not(variant) for variant in variants]
 
     @staticmethod
     def _append_candidate(
@@ -411,36 +594,95 @@ class OCRDialogueService:
         candidates: list[dict[str, object]],
         variants: list[np.ndarray],
         psm_modes: list[int],
+        *,
+        use_dictionary: bool = True,
     ) -> None:
         for variant in variants:
             for psm in psm_modes:
-                text, confidence = OCRDialogueService._tesseract_read_with_confidence(variant, psm=psm)
+                text, confidence = OCRDialogueService._tesseract_read_with_confidence(
+                    variant,
+                    psm=psm,
+                    use_dictionary=use_dictionary,
+                )
                 OCRDialogueService._append_candidate(candidates, text, confidence, source=f"tesseract-psm{psm}")
 
     @staticmethod
-    def _tesseract_read_with_confidence(image, psm: int) -> tuple[str, float]:
+    def _tesseract_read_with_confidence(image, psm: int, *, use_dictionary: bool = True) -> tuple[str, float]:
         config = (
             f"--oem 3 --psm {psm} -l eng "
             f"-c tessedit_char_whitelist={OCRDialogueService.TESSERACT_CHAR_WHITELIST} "
             "-c preserve_interword_spaces=1"
         )
+        if not use_dictionary:
+            config += " -c load_system_dawg=0 -c load_freq_dawg=0"
         data = pytesseract.image_to_data(image, config=config, output_type=pytesseract.Output.DICT)
         words: list[str] = []
         confidences: list[float] = []
-        for token, confidence in zip(data.get("text", []), data.get("conf", [])):
+        lefts = data.get("left", [])
+        tops = data.get("top", [])
+        widths = data.get("width", [])
+        heights = data.get("height", [])
+        img_h, img_w = image.shape[:2]
+        fallback_words: list[str] = []
+        fallback_confidences: list[float] = []
+        for index, (token, confidence) in enumerate(zip(data.get("text", []), data.get("conf", []))):
             normalized = OCRDialogueService._normalize_spaces(token)
             if not normalized:
                 continue
-            words.append(normalized)
             try:
                 confidence_value = float(confidence)
             except (TypeError, ValueError):
                 confidence_value = -1.0
+            left = int(lefts[index]) if index < len(lefts) else 0
+            top = int(tops[index]) if index < len(tops) else 0
+            width = int(widths[index]) if index < len(widths) else 0
+            height = int(heights[index]) if index < len(heights) else 0
+            peripheral = OCRDialogueService._is_peripheral_token(
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+                image_width=img_w,
+                image_height=img_h,
+            )
+            fallback_words.append(normalized)
+            if confidence_value >= 0:
+                fallback_confidences.append(confidence_value)
+            if peripheral and (len(OCRDialogueService._token_only_alpha(normalized)) <= 2 or confidence_value < 65.0):
+                continue
+            words.append(normalized)
             if confidence_value >= 0:
                 confidences.append(confidence_value)
+        if not words:
+            words = fallback_words
+            confidences = fallback_confidences
         text = OCRDialogueService._normalize_spaces(" ".join(words))
         average_confidence = sum(confidences) / len(confidences) if confidences else 0.0
         return text, average_confidence
+
+    @staticmethod
+    def _is_peripheral_token(
+        *,
+        left: int,
+        top: int,
+        width: int,
+        height: int,
+        image_width: int,
+        image_height: int,
+        margin_ratio: float = 0.10,
+    ) -> bool:
+        if width <= 0 or height <= 0 or image_width <= 0 or image_height <= 0:
+            return False
+        cx = left + (width / 2.0)
+        cy = top + (height / 2.0)
+        margin_x = image_width * margin_ratio
+        margin_y = image_height * margin_ratio
+        return (
+            cx < margin_x
+            or cx > (image_width - margin_x)
+            or cy < margin_y
+            or cy > (image_height - margin_y)
+        )
 
     @staticmethod
     def _deduplicate_text_candidates(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -505,22 +747,30 @@ class OCRDialogueService:
         return n_real * coverage * (1 + length_bonus) * (1 - garbage_penalty)
 
     @staticmethod
-    def _clean_ocr_line(raw: str) -> str:
+    def _clean_ocr_line(raw: str, class_name: str = "speech") -> str:
         out: list[str] = []
         for token in raw.split():
-            cleaned = OCRDialogueService._clean_token(token)
+            cleaned = OCRDialogueService._clean_token(token, class_name=class_name)
             if cleaned is not None:
                 out.append(cleaned)
-        return " ".join(out)
+        return OCRDialogueService._normalize_spaces(" ".join(out))
 
     @staticmethod
-    def _clean_token(token: str) -> str | None:
+    def _clean_token(token: str, class_name: str = "speech") -> str | None:
         t = token.strip(".,!?'-\" ")
         if not t:
+            return None
+        if not any(ch.isalnum() for ch in t):
             return None
         upper = OCRDialogueService._token_only_alpha(t).upper()
         if not upper:
             return None
+        if upper in OCRDialogueService.SHORT_WORD_WHITELIST:
+            return upper
+        if class_name == "sfx":
+            if len(upper) < 2 or OCRDialogueService._is_garbage_like(t):
+                return None
+            return upper
         if upper in COMIC_WHITELIST:
             return upper
         if OCRDialogueService._is_real_word(upper):

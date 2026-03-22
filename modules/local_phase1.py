@@ -610,14 +610,10 @@ def _box_containment_ratio(inner: tuple[int, int, int, int], outer: tuple[int, i
 def _dedupe_boxes_prefer_largest(
     boxes: list[tuple[int, int, int, int]],
     iou_threshold: float = 0.35,
-    containment_threshold: float = 0.92,
 ) -> list[tuple[int, int, int, int]]:
     deduped: list[tuple[int, int, int, int]] = []
     for box in sorted(boxes, key=lambda item: item[2] * item[3], reverse=True):
-        if any(
-            _box_iou(box, kept) >= iou_threshold or _box_containment_ratio(box, kept) >= containment_threshold
-            for kept in deduped
-        ):
+        if any(_box_iou(box, kept) >= iou_threshold for kept in deduped):
             continue
         deduped.append(box)
     return deduped
@@ -629,11 +625,8 @@ def _merge_detection_boxes(
 ) -> list[tuple[int, int, int, int]]:
     merged = _dedupe_boxes_prefer_largest(list(heuristic_boxes))
     for model_box in model_boxes:
-        if all(
-            _box_iou(model_box, existing) < 0.30 and _box_containment_ratio(model_box, existing) < 0.92
-            for existing in merged
-        ):
+        if all(_box_iou(model_box, existing) < 0.30 for existing in merged):
             merged.append(model_box)
-    merged = _dedupe_boxes_prefer_largest(merged, iou_threshold=0.30, containment_threshold=0.92)
+    merged = _dedupe_boxes_prefer_largest(merged, iou_threshold=0.30)
     merged.sort(key=lambda box: (box[1], box[0]))
     return merged

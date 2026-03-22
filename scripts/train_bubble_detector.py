@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import random
@@ -11,6 +12,9 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from torchvision.models.detection import fasterrcnn_mobilenet_v3_large_fpn
 from torchvision.transforms import functional as F
+
+from config import get_settings
+from modules.database import record_training_result, sync_dataset_split_from_coco
 
 
 DEFAULT_CLASS_NAME = "Bubble with Text"
@@ -177,6 +181,22 @@ def build_split_dataset(dataset_roots: list[Path], split: str, class_names: list
     return ConcatDataset(datasets)
 
 
+def count_split_annotations(dataset_roots: list[Path], split: str, class_names: list[str]) -> int:
+    total = 0
+    for dataset_root in dataset_roots:
+        annotation_path = dataset_root / split / "_annotations.coco.json"
+        payload = json.loads(annotation_path.read_text("utf-8"))
+        allowed = set(class_names)
+        categories = {
+            int(item["id"]): CLASS_ALIASES.get(str(item["name"]), str(item["name"]))
+            for item in payload.get("categories", [])
+        }
+        for item in payload.get("annotations", []):
+            if categories.get(int(item["category_id"])) in allowed:
+                total += 1
+    return total
+
+
 def load_init_weights(model: torch.nn.Module, weights_path: Path, device: torch.device) -> None:
     checkpoint = torch.load(weights_path, map_location=device)
     state_dict = checkpoint["model_state"] if isinstance(checkpoint, dict) and "model_state" in checkpoint else checkpoint
@@ -211,7 +231,10 @@ def main() -> None:
     device = select_device(args.device)
     print(f"Using device: {device}")
 
+    settings = get_settings()
     dataset_roots = [path.expanduser().resolve() for path in args.dataset_root]
+    for dataset_root in dataset_roots:
+        sync_dataset_split_from_coco(settings, dataset_root)
     class_names = args.class_names or detect_class_names(dataset_roots)
     print(f"Training classes: {class_names}")
 
@@ -273,6 +296,7 @@ def main() -> None:
     elif args.init_weights is not None:
         load_init_weights(model, args.init_weights.expanduser().resolve(), device)
 
+    started_at = datetime.now(timezone.utc).isoformat()
     for epoch in range(start_epoch, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, device, epoch)
         valid_loss = validate(model, valid_loader, device)
@@ -299,6 +323,32 @@ def main() -> None:
             torch.save(checkpoint, args.output)
             print(f"Saved best checkpoint to {args.output}")
 
+    finished_at = datetime.now(timezone.utc).isoformat()
+    train_annotation_count = count_split_annotations(dataset_roots, "train", class_names)
+    record_training_result(
+        settings,
+        run_key=f"{args.output.resolve()}",
+        model_type="bubble_detector",
+        dataset_name=",".join(path.name for path in dataset_roots),
+        train_split_version=None,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        train_image_count=len(train_dataset),
+        train_annotation_count=train_annotation_count,
+        best_checkpoint_path=args.output if args.output.exists() else None,
+        final_checkpoint_path=latest_path if latest_path.exists() else None,
+        best_train_loss=best_valid_loss if best_valid_loss != float("inf") else None,
+        status="completed",
+        metrics={
+            "history": history,
+            "class_names": class_names,
+            "dataset_roots": [str(path) for path in dataset_roots],
+            "device": str(device),
+        },
+        started_at=started_at,
+        finished_at=finished_at,
+    )
     print("Training complete.")
 
 

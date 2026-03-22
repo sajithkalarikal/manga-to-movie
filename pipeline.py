@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import Settings
+from modules.database import register_detected_panels, register_image_path
 from modules.ocr_dialogue import OCRDialogueService
 from modules.panel_detection import PanelDetectionService
 from modules.scene_caption import SceneCaptionService
@@ -32,11 +33,28 @@ class MangaVideoPipeline:
         panels_dir = job_dir / "panels"
         job_dir.mkdir(parents=True, exist_ok=True)
         panels_dir.mkdir(parents=True, exist_ok=True)
+        source_image_path = job_dir / f"source{upload_path.suffix or '.png'}"
 
         logger.info("Pipeline start request_id=%s", request_id)
+        await asyncio.to_thread(source_image_path.write_bytes, upload_path.read_bytes())
+        image_id = await asyncio.to_thread(
+            register_image_path,
+            self.settings,
+            source_image_path,
+            asset_key=request_id,
+            source_type="upload",
+        )
         panels = await self.panel_detector.detect_panels(upload_path=upload_path, output_dir=panels_dir)
         if not panels:
             raise RuntimeError("No panels were detected in the uploaded manga image.")
+        await asyncio.to_thread(
+            register_detected_panels,
+            self.settings,
+            image_id=image_id,
+            panels=panels,
+            generator="pipeline:detect_panels",
+            created_by="pipeline",
+        )
 
         dialogue = await self.ocr_service.extract_dialogue(panels)
         captions = await self.caption_service.generate_captions(panels)
@@ -65,7 +83,7 @@ class MangaVideoPipeline:
         metadata = {
             "request_id": request_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "source_image": str(upload_path),
+            "source_image": str(source_image_path),
             "panels": [
                 {"index": panel.index, "bbox": panel.bbox, "image_path": str(panel.image_path)}
                 for panel in panels

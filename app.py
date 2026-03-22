@@ -28,6 +28,23 @@ from modules.annotation_workspace import (
 from modules.ocr_dialogue import OCRDialogueService
 from modules.ocr_engine import get_ocr_engine
 from modules.bubble_detector import get_bubble_detector
+from modules.database import (
+    append_annotation_event,
+    append_job_event,
+    initialize_database,
+    register_detected_panels,
+    register_image_path,
+    store_annotation_snapshot,
+    sync_dataset_split_from_coco,
+    upsert_job,
+)
+from modules.database_v2 import (
+    insert_request_asset_v2,
+    initialize_v2_database,
+    load_request_override_v2,
+    replace_request_annotations_v2,
+    upsert_request_v2,
+)
 from modules.panel_model_detector import get_panel_model_detector
 from modules.panel_detection import PanelDetectionService
 from modules.scene_caption import SceneCaptionService
@@ -359,6 +376,12 @@ class SystemHealthReport(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    initialize_database(settings)
+    initialize_v2_database()
+    try:
+        sync_dataset_split_from_coco(settings, settings.annotation_dataset_root)
+    except Exception:
+        logger.exception("Failed to sync initial dataset split metadata into SQL")
     redis = await get_redis_pool()
     app.state.redis = redis
     yield
@@ -833,6 +856,42 @@ def _resolve_request_override_path(request_id: str) -> Path | None:
     return None
 
 
+def _relative_to_project_root(path: Path) -> Path:
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve())
+    except ValueError:
+        return path.resolve()
+
+
+def _register_request_v2(
+    *,
+    request_id: str,
+    status: str,
+    fs_root_path: Path,
+    asset_path: Path | None = None,
+    asset_type: str = "source_page",
+    file_name: str | None = None,
+    panel_mode: str | None = None,
+    bubble_mode: str | None = None,
+) -> None:
+    metadata = {"file_name": file_name} if file_name else {}
+    upsert_request_v2(
+        request_id=request_id,
+        status=status,
+        fs_root_path=fs_root_path,
+        panel_mode=panel_mode,
+        bubble_mode=bubble_mode,
+        metadata=metadata,
+    )
+    if asset_path is not None:
+        insert_request_asset_v2(
+            request_id=request_id,
+            asset_type=asset_type,
+            rel_path=_relative_to_project_root(asset_path),
+            metadata=metadata,
+        )
+
+
 @app.post("/generate-video", response_model=QueueVideoResponse, status_code=202)
 async def generate_video(file: UploadFile = File(...)) -> QueueVideoResponse:
     if not file.filename:
@@ -843,9 +902,38 @@ async def generate_video(file: UploadFile = File(...)) -> QueueVideoResponse:
     upload_path = settings.temp_dir / f"{request_id}{upload_suffix}"
     file_bytes = await file.read()
     await panel_detector.save_upload(upload_path, file_bytes)
+    request_root = settings.output_dir / request_id
+    await asyncio.to_thread(
+        _register_request_v2,
+        request_id=request_id,
+        status="uploaded",
+        fs_root_path=request_root,
+        asset_path=upload_path,
+        asset_type="source_upload",
+        file_name=file.filename,
+    )
+    image_id = await asyncio.to_thread(
+        register_image_path,
+        settings,
+        upload_path,
+        asset_key=request_id,
+        source_type="upload",
+    )
 
     redis = app.state.redis
-    await set_task_status(redis, request_id, build_status_payload(request_id, "queued", attempt=0, filename=file.filename))
+    await set_task_status(
+        redis,
+        request_id,
+        build_status_payload(
+            request_id,
+            "queued",
+            attempt=0,
+            filename=file.filename,
+            upload_path=str(upload_path),
+            image_id=image_id,
+            job_type="generate_video",
+        ),
+    )
     job = await enqueue_manga_job(redis, request_id=request_id, upload_path=str(upload_path))
     if job is None:
         raise HTTPException(status_code=500, detail="Failed to enqueue video generation job.")
@@ -911,9 +999,34 @@ async def detect_panels(file: UploadFile = File(...), panel_mode: str = Form("he
 
     try:
         await asyncio.to_thread(source_image_path.write_bytes, file_bytes)
+        await asyncio.to_thread(
+            _register_request_v2,
+            request_id=request_id,
+            status="review_pending",
+            fs_root_path=job_dir,
+            asset_path=source_image_path,
+            asset_type="source_page",
+            file_name=file.filename,
+            panel_mode=panel_mode,
+        )
+        image_id = await asyncio.to_thread(
+            register_image_path,
+            settings,
+            source_image_path,
+            asset_key=f"detect:{request_id}",
+            source_type="upload",
+        )
         detected_panels = await panel_detector.detect_panels(upload_path=upload_path, output_dir=panels_dir, panel_mode=panel_mode)
         if not detected_panels:
             raise HTTPException(status_code=422, detail="No panels were detected in the uploaded manga image.")
+        await asyncio.to_thread(
+            register_detected_panels,
+            settings,
+            image_id=image_id,
+            panels=detected_panels,
+            generator=f"detect-panels:{panel_mode}",
+            created_by="detect_panels_endpoint",
+        )
 
         panel_boxes = [
             _build_panel_box_response(request_id, panel.index, panel.bbox, panel.image_path)
@@ -949,13 +1062,41 @@ async def generate_script(
 
     job_dir = settings.output_dir / f"script-{request_id}"
     panels_dir = job_dir / "panels"
+    source_image_path = job_dir / f"source{upload_suffix}"
     job_dir.mkdir(parents=True, exist_ok=True)
     panels_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        await asyncio.to_thread(source_image_path.write_bytes, file_bytes)
+        await asyncio.to_thread(
+            _register_request_v2,
+            request_id=request_id,
+            status="processing",
+            fs_root_path=job_dir,
+            asset_path=source_image_path,
+            asset_type="source_page",
+            file_name=file.filename,
+            panel_mode=panel_mode,
+            bubble_mode=bubble_mode,
+        )
+        image_id = await asyncio.to_thread(
+            register_image_path,
+            settings,
+            source_image_path,
+            asset_key=f"script:{request_id}",
+            source_type="upload",
+        )
         panels = await panel_detector.detect_panels(upload_path=upload_path, output_dir=panels_dir, panel_mode=panel_mode)
         if not panels:
             raise HTTPException(status_code=422, detail="No panels were detected in the uploaded manga image.")
+        await asyncio.to_thread(
+            register_detected_panels,
+            settings,
+            image_id=image_id,
+            panels=panels,
+            generator=f"generate-script:{panel_mode}",
+            created_by="generate_script_endpoint",
+        )
 
         features = await caption_service.analyze_panel_features(panels, bubble_mode=bubble_mode)
         dialogue = await ocr_service.extract_dialogue(panels, region_hints=features)
@@ -1005,10 +1146,30 @@ async def analyze_panels(
 
     job_dir = settings.output_dir / request_id
     panels_dir = job_dir / "panels"
+    source_image_path = job_dir / f"source{upload_suffix}"
     job_dir.mkdir(parents=True, exist_ok=True)
     panels_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        await asyncio.to_thread(source_image_path.write_bytes, file_bytes)
+        await asyncio.to_thread(
+            _register_request_v2,
+            request_id=request_id,
+            status="review_pending",
+            fs_root_path=job_dir,
+            asset_path=source_image_path,
+            asset_type="source_page",
+            file_name=file.filename,
+            panel_mode=panel_mode,
+            bubble_mode=bubble_mode,
+        )
+        image_id = await asyncio.to_thread(
+            register_image_path,
+            settings,
+            source_image_path,
+            asset_key=f"analyze:{request_id}",
+            source_type="upload",
+        )
         if bubble_mode == "detector":
             logger.info(
                 "Phase1 detector run started request_id=%s filename=%s started_at=%s",
@@ -1019,6 +1180,14 @@ async def analyze_panels(
         panels = await panel_detector.detect_panels(upload_path=upload_path, output_dir=panels_dir, panel_mode=panel_mode)
         if not panels:
             raise HTTPException(status_code=422, detail="No panels were detected in the uploaded manga image.")
+        await asyncio.to_thread(
+            register_detected_panels,
+            settings,
+            image_id=image_id,
+            panels=panels,
+            generator=f"analyze-panels:{panel_mode}",
+            created_by="analyze_panels_endpoint",
+        )
 
         features = await caption_service.analyze_panel_features(panels, bubble_mode=bubble_mode)
         dialogue = await ocr_service.extract_dialogue(panels, region_hints=features)
@@ -1069,11 +1238,58 @@ async def save_panel_overrides(payload: SaveOverridesRequest) -> SaveOverridesRe
         job_dir=job_dir,
         overrides_path=overrides_path,
     )
+    v2_result = await asyncio.to_thread(
+        replace_request_annotations_v2,
+        request_id=payload.request_id,
+        panel_boxes=[item.model_dump(mode="json") for item in (payload.panel_boxes or [])],
+        panel_regions={
+            panel_key: [region.model_dump(mode="json") for region in regions]
+            for panel_key, regions in (payload.panel_regions or {}).items()
+        },
+        created_by="override_ui",
+    )
+    await asyncio.to_thread(
+        upsert_request_v2,
+        request_id=payload.request_id,
+        status="review_pending",
+        fs_root_path=job_dir,
+        metadata={"overrides": serialized.get("overrides") or {}},
+    )
+    await asyncio.to_thread(
+        upsert_job,
+        settings,
+        {
+            "request_id": payload.request_id,
+            "status": "review_pending",
+            "output_path": str(job_dir),
+            "filename": None,
+            "job_type": "panel_override",
+        },
+        job_type="panel_override",
+    )
+    await asyncio.to_thread(
+        append_job_event,
+        settings,
+        request_id=payload.request_id,
+        event_type="panel_overrides_saved",
+        status="saved",
+        details={
+            "request_output_dir": str(job_dir),
+            "request_override_path": str(overrides_path),
+            "database_record_path": str(database_path),
+            "override_count": len(payload.overrides),
+            "panel_box_count": len(payload.panel_boxes or []),
+            "panel_region_groups": len(payload.panel_regions or {}),
+            "v2_annotation_count": v2_result["annotation_count"],
+            "v2_version_count": v2_result["version_count"],
+        },
+    )
     logger.info(
-        "Stored override request_id=%s request_path=%s database_path=%s",
+        "Stored override request_id=%s request_path=%s database_path=%s v2_annotations=%s",
         payload.request_id,
         overrides_path,
         database_path,
+        v2_result["annotation_count"],
     )
     return SaveOverridesResponse(
         request_id=payload.request_id,
@@ -1084,6 +1300,17 @@ async def save_panel_overrides(payload: SaveOverridesRequest) -> SaveOverridesRe
 
 @app.get("/panel-overrides/{request_id}", response_model=LoadOverridesResponse)
 async def load_panel_overrides(request_id: str) -> LoadOverridesResponse:
+    v2_payload = await asyncio.to_thread(load_request_override_v2, request_id)
+    if v2_payload is not None:
+        return LoadOverridesResponse(
+            request_id=request_id,
+            exists=True,
+            overrides_path=str(settings.sql_database_path.parent / "app_state_v2.sqlite3"),
+            overrides=v2_payload.get("overrides") or {},
+            panel_boxes=v2_payload.get("panel_boxes") or [],
+            panel_regions=v2_payload.get("panel_regions") or {},
+        )
+
     overrides_path = _resolve_request_override_path(request_id)
     if overrides_path is None:
         return LoadOverridesResponse(request_id=request_id, exists=False)
@@ -1143,6 +1370,43 @@ async def save_annotation_item(payload: SaveDatasetAnnotationsRequest) -> SaveDa
             height=payload.height,
             annotations=[item.model_dump(mode="json") for item in payload.annotations],
         )
+        dataset_root = resolve_dataset_root(settings, payload.dataset)
+        await asyncio.to_thread(
+            store_annotation_snapshot,
+            settings,
+            dataset_root=dataset_root,
+            split_name=payload.split,
+            file_name=payload.file_name,
+            width=payload.width,
+            height=payload.height,
+            annotations=[item.model_dump(mode="json") for item in payload.annotations],
+            created_by="annotation_ui",
+        )
+        dataset_root = resolve_dataset_root(settings, payload.dataset)
+        image_id = await asyncio.to_thread(
+            register_image_path,
+            settings,
+            dataset_root / payload.split / payload.file_name,
+            asset_key=f"{dataset_root.name}:{payload.file_name}",
+            source_type="dataset",
+            width=payload.width,
+            height=payload.height,
+        )
+        await asyncio.to_thread(
+            append_annotation_event,
+            settings,
+            image_id=image_id,
+            dataset_name=dataset_root.name,
+            split_name="validation" if payload.split == "valid" else payload.split,
+            event_type="annotation_saved",
+            actor="annotation_ui",
+            file_name=payload.file_name,
+            details={
+                "annotation_path": str(annotation_path),
+                "annotation_count": len(payload.annotations),
+                "classes": sorted({item.class_name for item in payload.annotations}),
+            },
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SaveDatasetAnnotationsResponse(
@@ -1171,6 +1435,21 @@ async def export_annotation_dataset(dataset: str = Form(...), export_mode: str =
         annotation_files = export_annotated_dataset(settings, destination_root, dataset_key=dataset)
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported export_mode: {export_mode}")
+    await asyncio.to_thread(
+        append_annotation_event,
+        settings,
+        image_id=None,
+        dataset_name=dataset,
+        split_name="all",
+        event_type="dataset_exported",
+        actor="annotation_ui",
+        file_name=None,
+        details={
+            "export_mode": export_mode,
+            "output_dir": str(destination_root),
+            "annotation_files": [str(path) for path in annotation_files],
+        },
+    )
     return ExportDatasetResponse(
         dataset=dataset,
         export_mode=export_mode,

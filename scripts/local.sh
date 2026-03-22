@@ -10,7 +10,8 @@ API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8000}"
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-4173}"
-BUBBLE_DETECTOR_DEFAULT_WEIGHTS="$ROOT_DIR/models/bubble_detector_v2_new_only.pt"
+BUBBLE_DETECTOR_DEFAULT_WEIGHTS="$ROOT_DIR/models/text_detector.pt"
+BUBBLE_DETECTOR_FALLBACK_WEIGHTS="$ROOT_DIR/models/bubble_detector_v2_new_only.pt"
 PANEL_DETECTOR_DEFAULT_WEIGHTS="$ROOT_DIR/models/panel_detector.pt"
 ENABLE_MANGA_OCR="${ENABLE_MANGA_OCR:-0}"
 ENABLE_EASYOCR="${ENABLE_EASYOCR:-0}"
@@ -46,9 +47,14 @@ ensure_keys_file() {
 configure_bubble_detector_env() {
   export BUBBLE_DETECTOR_DEVICE
   export BUBBLE_DETECTOR_MAX_SIDE
-  if [[ -z "${BUBBLE_DETECTOR_WEIGHTS:-}" && -f "$BUBBLE_DETECTOR_DEFAULT_WEIGHTS" ]]; then
-    export BUBBLE_DETECTOR_WEIGHTS="$BUBBLE_DETECTOR_DEFAULT_WEIGHTS"
-    echo "Using local bubble detector weights at $BUBBLE_DETECTOR_WEIGHTS"
+  if [[ -z "${BUBBLE_DETECTOR_WEIGHTS:-}" ]]; then
+    if [[ -f "$BUBBLE_DETECTOR_DEFAULT_WEIGHTS" ]]; then
+      export BUBBLE_DETECTOR_WEIGHTS="$BUBBLE_DETECTOR_DEFAULT_WEIGHTS"
+      echo "Using local bubble detector weights at $BUBBLE_DETECTOR_WEIGHTS"
+    elif [[ -f "$BUBBLE_DETECTOR_FALLBACK_WEIGHTS" ]]; then
+      export BUBBLE_DETECTOR_WEIGHTS="$BUBBLE_DETECTOR_FALLBACK_WEIGHTS"
+      echo "Using fallback bubble detector weights at $BUBBLE_DETECTOR_WEIGHTS"
+    fi
   fi
 
   if [[ -n "${BUBBLE_DETECTOR_WEIGHTS:-}" ]]; then
@@ -138,7 +144,7 @@ start_redis() {
 }
 
 run_api() {
-  ensure_system_deps
+  start_redis
   ensure_venv
   ensure_keys_file
   configure_fast_ocr_env
@@ -258,7 +264,7 @@ Usage: ./scripts/local.sh <command>
 Commands:
   setup   Create .venv, install Python deps, install web deps when available, ensure local.keys.json, start Redis
   redis   Start Redis if it is not already running
-  api     Run the FastAPI app
+  api     Start Redis if needed, then run the FastAPI app
   worker  Run the background worker
   dev     Start Redis, the API, the worker, and the web app when available
   web-install  Install Node dependencies for web/

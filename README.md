@@ -30,6 +30,15 @@ The current Phase 1 path is increasingly local-first:
 - Scene metadata and intermediate artifacts saved in `outputs/<request_id>/`
 - Manual panel override saving for speech, narration, SFX, and bubble counts
 
+## Architecture Notes
+
+- Database architecture and SQLite migration notes:
+  - [DATABASE_README.md](/Users/sajith/Documents/New%20project/manga-to-movie/DATABASE_README.md)
+- Current live state:
+  - legacy SQLite still handles image/job/training metadata
+  - new SQLite v2 now stores request rows and override-derived annotation history
+  - override loading is table-first with JSON fallback
+
 ## Project Structure
 
 ```text
@@ -82,10 +91,11 @@ After startup, you can use:
 You can also start pieces individually:
 
 ```bash
-./scripts/local.sh redis
 ./scripts/local.sh api
 ./scripts/local.sh worker
 ```
+
+`./scripts/local.sh api` now starts Redis automatically if needed.
 
 The legacy static UI is still available at [http://localhost:8000/ui](http://localhost:8000/ui), but current frontend work should go through `ui_v2`.
 

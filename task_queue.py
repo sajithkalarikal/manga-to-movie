@@ -28,7 +28,13 @@ async def set_task_status(redis: ArqRedis, request_id: str, payload: dict[str, o
     settings = get_settings()
     key = f"task:{request_id}"
     await redis.set(key, json.dumps(payload), ex=settings.task_result_ttl_seconds)
-    await asyncio.to_thread(upsert_job, settings, payload)
+    await asyncio.to_thread(
+        upsert_job,
+        settings,
+        payload,
+        image_id=int(payload["image_id"]) if payload.get("image_id") is not None else None,
+        job_type=str(payload.get("job_type", "generate_video")),
+    )
 
 
 async def get_task_status(redis: ArqRedis, request_id: str) -> dict[str, object] | None:
